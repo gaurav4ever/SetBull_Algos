@@ -1,0 +1,55 @@
+//@version=5
+indicator("15-Min Range vs. ATR (1:2 Ratio)", overlay=true)
+
+// Step 1: Take previous day ATR (Average True Range)
+atrPeriod = 14
+prevATR = request.security(syminfo.tickerid, "D", ta.atr(atrPeriod)[1])
+
+// Step 2: Take last close price of the previous day
+prevClose = request.security(syminfo.tickerid, "D", close[1])
+
+// Step 3: Calculate the target range based on a 1:2 Risk/Reward ratio
+targetRange = prevATR 
+
+// Step 4: Initialize variables for the high and low of the 15-minute range
+var float high15min = na
+var float low15min = na
+
+// Step 5: Track the number of 5-minute candles passed
+var int candlesPassed = 0
+
+// Step 6: Plot horizontal rays from the 5-minute candle high and low after the first 3 candles
+var line highRay = na
+var line lowRay = na
+
+
+// Step 6: Track the high and low during the first 15 minutes
+if (ta.change(time("D")) != 0)  // New day detected
+    high15min := na
+    low15min := na
+    candlesPassed := 0
+
+if (ta.change(time("5")) != 0)  // New 5-minute candle detected
+    candlesPassed := candlesPassed + 1
+    if (candlesPassed == 1)
+        // Initialize high and low with the first 5-minute candle
+        high15min := high
+        low15min := low
+    else if (candlesPassed > 1 and candlesPassed <= 3)
+        // Update high and low with subsequent 5-minute candles
+        high15min := math.max(high15min, high)
+        low15min := math.min(low15min, low)
+    else if (candlesPassed == 4)
+        // Plot lines after the first 15 minutes (i.e., after 3 five-minute candles)
+        highRay := line.new(x1=bar_index - 3, y1=high15min, x2=bar_index + 27, y2=high15min, color=color.green, width=2)
+        lowRay := line.new(x1=bar_index - 3, y1=low15min, x2=bar_index + 27, y2=low15min, color=color.red, width=2)
+        
+range15min = high15min - low15min
+
+// Step 7: Check if the current 15-minute range is less than half of ATR and plot the label
+if (candlesPassed == 4)
+    rangeValue = targetRange / range15min
+    roundedRangeValue = math.round(rangeValue * 100) / 100
+    labelText = (roundedRangeValue >= 3 ? "YES " : "NO ") + str.tostring(roundedRangeValue)
+    label.new(x=bar_index, y=high15min, text=labelText, 
+              color=color.white, style=label.style_label_down, textcolor=color.blue, size=size.normal)
