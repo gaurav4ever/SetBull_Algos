@@ -1,0 +1,41 @@
+//@version=5
+indicator("Buy above 9 EMA and 5 EMA candidate candle", overlay=true)
+
+// Calculate EMAs
+ema5 = ta.ema(close, 5)
+ema9 = ta.ema(close, 9)
+ema50 = ta.ema(close, 50)
+
+// Calculate RSI
+rsi = ta.rsi(close, 14)
+
+// Function to check if last n candles closed above a specific EMA
+is_above_ema(candles, ema) =>
+    is_above = true
+    for i = 0 to candles - 1
+        is_above := is_above and (close[i] > ema[i])
+    is_above
+
+// Calculate intraday session start
+start_time = timestamp("0000-01-01 09:15")  // Set for 9:15 AM as start of the day
+current_time = timestamp("0000-01-01 09:15") + (9 * 5 * 60 * 1000)  // 9th 5-minute candle
+
+is_after_9th_candle = (timenow > current_time)
+
+// Check if last 5 candles closed above 5 EMA
+above5EMA = is_above_ema(5, ema5)
+
+// Check if last 9 candles closed above 9 EMA
+above9EMA = is_above_ema(9, ema9)
+
+// Define the candidate candle
+candidateCandle = (above5EMA and above9EMA)
+
+// Add the edge condition (last 9th candle above 50 EMA and RSI of candidate candle > 60)
+markCandle = candidateCandle and (close[8] > ema50[8]) and (rsi > 60)
+
+// Only start checking after the 9th 5-minute candle of the day
+finalMark = markCandle and is_after_9th_candle
+
+// Plot a small triangle above the bar if all conditions are met
+plotshape(series=finalMark, location=location.abovebar, color=color.green, size=size.small, style=shape.triangledown)
