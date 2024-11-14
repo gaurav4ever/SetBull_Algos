@@ -1,0 +1,16 @@
+//@version=5
+indicator("OAH OAL indicator", overlay=true)
+
+// Previous day's data
+prev_high = ta.highest(high[1], 1)
+prev_low = ta.lowest(low[1], 1)
+prev_50pct = prev_low + ((prev_high - prev_low) * 0.5)
+
+// Check conditions
+is_oah_selling = open > prev_50pct and close < open
+
+// Plot signals
+plotshape(is_oah_selling, title="OAH Selling", text="OAH", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.small)
+
+// Alert condition
+alertcondition(is_oah_selling, title="OAH Selling Day", message="OAH Selling pattern detected")
