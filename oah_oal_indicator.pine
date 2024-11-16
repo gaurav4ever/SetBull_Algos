@@ -56,8 +56,8 @@ var EMA_LENGTH = 9
 // Calculate 9 EMA
 ema9 = ta.ema(close, EMA_LENGTH)
 
-// Function to analyze trend quality
-isQualityTrend() =>
+// Function to analyze bullish trend quality
+isBullishQualityTrend() =>
     var int belowEmaCount = 0
     var bool allAboveEma = true
     var bool hadValidPullback = false
@@ -77,17 +77,44 @@ isQualityTrend() =>
             if i > 1 and close[i-1] > ema9[i-1]
                 hadValidPullback := true
     
-    // Conditions for quality trend:
-    // 1. Current close above EMA
-    // 2. EITHER all bars above EMA OR had one valid pullback
-    // 3. Total days below EMA should be limited
+    // Conditions for bullish quality trend
     isValid = close > ema9 and 
              (allAboveEma or hadValidPullback) and 
              belowEmaCount <= 3    // Allow max 3 days below EMA
 
     isValid
 
-// Plot only on the last bar
-plotCondition = isQualityTrend() and barstate.islast
-if plotCondition
-    label.new(bar_index, high, "✓", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+// Function to analyze bearish trend quality
+isBearishQualityTrend() =>
+    var int aboveEmaCount = 0
+    var bool allBelowEma = true
+    var bool hadValidRally = false
+    
+    // Reset for new calculation
+    aboveEmaCount := 0
+    allBelowEma := true
+    hadValidRally := false
+    
+    // Analyze last 10 days
+    for i = 1 to LOOKBACK_PERIOD
+        if close[i] > ema9[i]
+            aboveEmaCount := aboveEmaCount + 1
+            allBelowEma := false
+            
+            // If we see price back below EMA after being above, mark valid rally
+            if i > 1 and close[i-1] < ema9[i-1]
+                hadValidRally := true
+    
+    // Conditions for bearish quality trend
+    isValid = close < ema9 and 
+             (allBelowEma or hadValidRally) and 
+             aboveEmaCount <= 3    // Allow max 3 days above EMA
+
+    isValid
+
+// Plot conditions only on the last bar
+if barstate.islast
+    if isBullishQualityTrend()
+        label.new(bar_index, high, "✓", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+    if isBearishQualityTrend()
+        label.new(bar_index, low, "✓", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.normal)
