@@ -51,36 +51,45 @@ plotarrow(isBigDownMove ? -1 : na, title="Down Move", colordown=color.red, maxhe
 
 // Constants
 var LOOKBACK_PERIOD = 10
-var EMA_LENGTH = 9
+var EMA9_LENGTH = 9
+var EMA50_LENGTH = 50
+var EMA_CHECK_DAYS = 5
 
-// Calculate 9 EMA
-ema9 = ta.ema(close, EMA_LENGTH)
+// Calculate EMAs
+ema9 = ta.ema(close, EMA9_LENGTH)
+ema50 = ta.ema(close, EMA50_LENGTH)
 
 // Function to analyze bullish trend quality
 isBullishQualityTrend() =>
     var int belowEmaCount = 0
     var bool allAboveEma = true
     var bool hadValidPullback = false
+    var bool above50Ema = true
     
-    // Reset for new calculation
+    // Check last 5 days above 50 EMA
+    for i = 0 to EMA_CHECK_DAYS-1
+        if close[i] < ema50[i]
+            above50Ema := false
+    
+    // Reset for 9 EMA analysis
     belowEmaCount := 0
     allAboveEma := true
     hadValidPullback := false
     
-    // Analyze last 10 days
+    // Analyze last 10 days for 9 EMA relationship
     for i = 1 to LOOKBACK_PERIOD
         if close[i] < ema9[i]
             belowEmaCount := belowEmaCount + 1
             allAboveEma := false
             
-            // If we see price back above EMA after being below, mark valid pullback
             if i > 1 and close[i-1] > ema9[i-1]
                 hadValidPullback := true
     
-    // Conditions for bullish quality trend
+    // Combined conditions for bullish quality trend
     isValid = close > ema9 and 
              (allAboveEma or hadValidPullback) and 
-             belowEmaCount <= 3    // Allow max 3 days below EMA
+             belowEmaCount <= 3 and    
+             above50Ema              // Must be above 50 EMA for last 5 days
 
     isValid
 
@@ -89,26 +98,32 @@ isBearishQualityTrend() =>
     var int aboveEmaCount = 0
     var bool allBelowEma = true
     var bool hadValidRally = false
+    var bool below50Ema = true
     
-    // Reset for new calculation
+    // Check last 5 days below 50 EMA
+    for i = 0 to EMA_CHECK_DAYS-1
+        if close[i] > ema50[i]
+            below50Ema := false
+    
+    // Reset for 9 EMA analysis
     aboveEmaCount := 0
     allBelowEma := true
     hadValidRally := false
     
-    // Analyze last 10 days
+    // Analyze last 10 days for 9 EMA relationship
     for i = 1 to LOOKBACK_PERIOD
         if close[i] > ema9[i]
             aboveEmaCount := aboveEmaCount + 1
             allBelowEma := false
             
-            // If we see price back below EMA after being above, mark valid rally
             if i > 1 and close[i-1] < ema9[i-1]
                 hadValidRally := true
     
-    // Conditions for bearish quality trend
+    // Combined conditions for bearish quality trend
     isValid = close < ema9 and 
              (allBelowEma or hadValidRally) and 
-             aboveEmaCount <= 3    // Allow max 3 days above EMA
+             aboveEmaCount <= 3 and
+             below50Ema              // Must be below 50 EMA for last 5 days
 
     isValid
 
