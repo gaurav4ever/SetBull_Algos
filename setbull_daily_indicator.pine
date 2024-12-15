@@ -2,7 +2,7 @@
 indicator("SETBULL-DAILY", overlay=true)
 
 // .....................................................................
-// >5% OAH OAL INDICATOR
+// OAH OAL INDICATOR
 // .....................................................................
 
 prev_high = ta.highest(high[1], 1)
@@ -130,6 +130,34 @@ isBearishQualityTrend() =>
 // Plot conditions only on the last bar
 if barstate.islast
     if isBullishQualityTrend()
-        label.new(bar_index, high, "✓", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+        label.new(bar_index, high + 3, "✓", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
     if isBearishQualityTrend()
-        label.new(bar_index, low, "✓", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.normal)
+        label.new(bar_index, low - 3, "✓", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.normal)
+
+
+// .....................................................................
+// MULTIPLE 5% MOVES DETECTOR
+// .....................................................................
+
+// Function to count big moves in last N days
+countBigMoves(lookback) =>
+    var int moveCount = 0
+    moveCount := 0
+    
+    for i = 0 to lookback-1
+        dayMove = ((close[i] - open[i]) / open[i]) * 100
+        if math.abs(dayMove) >= 5.0
+            moveCount += 1
+    
+    moveCount
+
+// Calculate True Range for label placement
+tr = ta.tr
+
+// Check for multiple big moves
+moveCount = countBigMoves(27)
+hasTwoBigMoves = moveCount >= 2
+
+// Plot black label for stocks with multiple big moves
+if barstate.islast and hasTwoBigMoves
+    label.new(bar_index, high + (tr * 0.54), str.tostring(moveCount) + " x", color=color.black, style=label.style_label_down, textcolor=color.white, size=size.normal)
