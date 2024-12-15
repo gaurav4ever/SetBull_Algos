@@ -16,8 +16,8 @@ is_oah_selling = open > prev_60pct and close < open
 is_oal_buying = open < prev_60pct and close > open
 
 // Using lighter colors
-light_red = color.new(color.red, 63)   
-light_green = color.new(color.green, 63)
+light_red = color.new(color.red, 54)   
+light_green = color.new(color.green, 54)
 
 // Plot patterns
 plotshape(is_oah_selling, style=shape.triangledown, location=location.abovebar, color=light_red, size=size.small)
@@ -42,8 +42,8 @@ isBigUpMove = percentMove >= pctChange
 isBigDownMove = percentMove <= -pctChange
 
 // Plot arrows for significant moves
-plotarrow(isBigUpMove ? 1 : na, title="Up Move", colorup=color.green, maxheight=25, minheight=25)
-plotarrow(isBigDownMove ? -1 : na, title="Down Move", colordown=color.red, maxheight=25, minheight=25)
+plotarrow(isBigUpMove ? 1 : na, title="Up Move", colorup=light_green, maxheight=25, minheight=25)
+plotarrow(isBigDownMove ? -1 : na, title="Down Move", colordown=light_red, maxheight=25, minheight=25)
 
 // .....................................................................
 // >5% TREND QUALITY INDICATOR
@@ -128,11 +128,12 @@ isBearishQualityTrend() =>
     isValid
 
 // Plot conditions only on the last bar
+light_blue = color.new(color.blue, 54)   
 if barstate.islast
     if isBullishQualityTrend()
-        label.new(bar_index, high + 3, "✓", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+        label.new(bar_index, high + 3, "✓", color=light_blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
     if isBearishQualityTrend()
-        label.new(bar_index, low - 3, "✓", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.normal)
+        label.new(bar_index, low - 3, "✓", color=light_red, style=label.style_label_up, textcolor=color.white, size=size.normal)
 
 
 
