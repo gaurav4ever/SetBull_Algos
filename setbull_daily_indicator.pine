@@ -135,29 +135,39 @@ if barstate.islast
         label.new(bar_index, low - 3, "✓", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.normal)
 
 
+
 // .....................................................................
-// MULTIPLE 5% MOVES DETECTOR
+// MAMBA MOVES DETECTOR (>5% moves with trend)
 // .....................................................................
 
-// Function to count big moves in last N days
-countBigMoves(lookback) =>
+// Function to count MAMBA moves in last N days
+countMambaMoves(lookback) =>
     var int moveCount = 0
     moveCount := 0
     
+    isAbove50 = close > ema50
+    
     for i = 0 to lookback-1
         dayMove = ((close[i] - open[i]) / open[i]) * 100
-        if math.abs(dayMove) >= 5.0
+        
+        // Count only upside MAMBA moves above 50 EMA
+        if isAbove50 and dayMove >= 5.0 and close[i] > ema50[i]
+            moveCount += 1
+            
+        // Count only downside MAMBA moves below 50 EMA    
+        if not isAbove50 and dayMove <= -5.0 and close[i] < ema50[i]
             moveCount += 1
     
     moveCount
 
-// Calculate True Range for label placement
+// Calculate counts
+moveCount = countMambaMoves(21)
+hasMambaMoves = moveCount >= 2
 tr = ta.tr
 
-// Check for multiple big moves
-moveCount = countBigMoves(27)
-hasTwoBigMoves = moveCount >= 2
+placement = close > ema50 ? (high + (tr * 0.54)) : (low - (tr * 0.54))
+style = close > ema50 ? label.style_label_down : label.style_label_up
 
-// Plot black label for stocks with multiple big moves
-if barstate.islast and hasTwoBigMoves
-    label.new(bar_index, high + (tr * 0.54), str.tostring(moveCount) + " x", color=color.black, style=label.style_label_down, textcolor=color.white, size=size.normal)
+// Plot MAMBA moves label
+if barstate.islast and hasMambaMoves
+    label.new(bar_index, placement, str.tostring(moveCount) + "X", color=color.black, style=style, textcolor=color.white, size=size.normal)
