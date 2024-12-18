@@ -137,7 +137,7 @@ if barstate.islast
 
 
 // .....................................................................
-// MAMBA MOVES DETECTOR (>5% moves with trend)
+// MAMBA MOVES DETECTOR (>5% bullish moves and >-3% bearish moves with trend)
 // .....................................................................
 
 // Function to count MAMBA moves in last N days
@@ -155,7 +155,7 @@ countMambaMoves(lookback) =>
             moveCount += 1
             
         // Count only downside MAMBA moves below 50 EMA    
-        if not isAbove50 and dayMove <= -5.0 and close[i] < ema50[i]
+        if not isAbove50 and dayMove <= -3.0 and close[i] < ema50[i]
             moveCount += 1
     
     moveCount
