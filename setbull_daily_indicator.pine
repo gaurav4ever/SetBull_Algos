@@ -136,40 +136,222 @@ if barstate.islast
     if isBearishQualityTrend()
         label.new(bar_index, low - 3, "✓", color=light_blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
 
-
-
 // .....................................................................
-// MAMBA MOVES DETECTOR (>5% bullish moves and >-3% bearish moves with trend)
+// MAMBA MOVES DETECTOR WITH SEQUENCE ANALYSIS (ENHANCED)
 // .....................................................................
 
-// Function to count MAMBA moves in last N days
-countMambaMoves(lookback) =>
-    var int moveCount = 0
-    moveCount := 0
+// Function to detect if a bar is a Mamba move
+isMambaMove(idx) =>
+    barMove = ((close[idx] - open[idx]) / open[idx]) * 100
+    isAbove50 = close[idx] > ema50[idx]
     
-    isAbove50 = close > ema50
+    // Bullish Mamba move: >=5% up and above 50 EMA
+    // Bearish Mamba move: <=-3% down and below 50 EMA
+    bullishMamba = isAbove50 and barMove >= bullPctChange
+    bearishMamba = (not isAbove50) and barMove <= -bearPctChange
+    
+    [bullishMamba or bearishMamba, isAbove50]
+
+// Constants for sequence analysis
+var ANALYSIS_PERIOD = 27  // Look back 27 days
+
+// Arrays to store sequence lengths
+var mamba_sequences = array.new_int(0)
+var non_mamba_sequences = array.new_int(0)
+var bullish_mamba_sequences = array.new_int(0)
+var bearish_mamba_sequences = array.new_int(0)
+
+// Original Mamba moves counter function (preserved)
+countMambaMoves(lookback) =>
+    var int bullishCount = 0
+    var int bearishCount = 0
+    bullishCount := 0
+    bearishCount := 0
     
     for i = 0 to lookback-1
         dayMove = ((close[i] - open[i]) / open[i]) * 100
+        isAbove50Local = close[i] > ema50[i]
         
         // Count only upside MAMBA moves above 50 EMA
-        if isAbove50 and dayMove >= 5.0 and close[i] > ema50[i]
-            moveCount += 1
+        if isAbove50Local and dayMove >= bullPctChange
+            bullishCount += 1
             
         // Count only downside MAMBA moves below 50 EMA    
-        if not isAbove50 and dayMove <= -3.0 and close[i] < ema50[i]
-            moveCount += 1
+        if not isAbove50Local and dayMove <= -bearPctChange
+            bearishCount += 1
     
-    moveCount
+    [bullishCount, bearishCount]
 
-// Calculate counts
-moveCount = countMambaMoves(21)
-hasMambaMoves = moveCount >= 2
+// Calculate original count (preserved)
+[bullMoveCount, bearMoveCount] = countMambaMoves(21)
+totalMoveCount = bullMoveCount + bearMoveCount
+hasMambaMoves = totalMoveCount >= 2
 tr = ta.tr
 
-placement = close > ema50 ? (high + (tr * 0.54)) : (low - (tr * 1.54))
-style = close > ema50 ? label.style_label_down : label.style_label_up
-
-// Plot MAMBA moves label
-if barstate.islast and hasMambaMoves
-    label.new(bar_index, placement, str.tostring(moveCount) + "X", color=color.black, style=style, textcolor=color.white, size=size.normal)
+// Process historical data to find sequences
+if barstate.islast
+    // Variables to track current sequence
+    current_mamba_count = 0
+    current_non_mamba_count = 0
+    current_bull_mamba_count = 0
+    current_bear_mamba_count = 0
+    is_tracking_mamba = false
+    last_was_bullish = false
+    
+    // Scan through the last 27 days (start from oldest to newest)
+    for i = 0 to ANALYSIS_PERIOD
+        idx = ANALYSIS_PERIOD - i
+        [is_mamba, is_bullish] = isMambaMove(idx)
+        
+        // Handle Mamba move
+        if is_mamba
+            if is_tracking_mamba
+                // Continue the current Mamba sequence
+                current_mamba_count += 1
+                
+                // Track bullish/bearish sequences separately
+                if is_bullish
+                    if last_was_bullish
+                        current_bull_mamba_count += 1
+                    else
+                        // Save previous bearish sequence if exists
+                        if current_bear_mamba_count > 0
+                            array.push(bearish_mamba_sequences, current_bear_mamba_count)
+                        current_bull_mamba_count := 1
+                else
+                    if not last_was_bullish
+                        current_bear_mamba_count += 1
+                    else
+                        // Save previous bullish sequence if exists
+                        if current_bull_mamba_count > 0
+                            array.push(bullish_mamba_sequences, current_bull_mamba_count)
+                        current_bear_mamba_count := 1
+            else
+                // If we were tracking non-Mamba, save that sequence
+                if current_non_mamba_count > 0
+                    array.push(non_mamba_sequences, current_non_mamba_count)
+                
+                // Start a new Mamba sequence
+                current_mamba_count := 1
+                is_tracking_mamba := true
+                
+                // Also start proper bullish/bearish tracking
+                if is_bullish
+                    current_bull_mamba_count := 1
+                    current_bear_mamba_count := 0
+                else
+                    current_bear_mamba_count := 1
+                    current_bull_mamba_count := 0
+            
+            last_was_bullish := is_bullish
+        else
+            // Handle non-Mamba move
+            if is_tracking_mamba
+                // Save the completed Mamba sequence
+                array.push(mamba_sequences, current_mamba_count)
+                
+                // Also save completed bull/bear sequences
+                if current_bull_mamba_count > 0
+                    array.push(bullish_mamba_sequences, current_bull_mamba_count)
+                if current_bear_mamba_count > 0
+                    array.push(bearish_mamba_sequences, current_bear_mamba_count)
+                
+                // Start a new non-Mamba sequence
+                current_non_mamba_count := 1
+                is_tracking_mamba := false
+                current_bull_mamba_count := 0
+                current_bear_mamba_count := 0
+            else
+                // Continue the current non-Mamba sequence
+                current_non_mamba_count += 1
+    
+    // Add the final sequence if needed
+    if is_tracking_mamba and current_mamba_count > 0
+        array.push(mamba_sequences, current_mamba_count)
+        
+        if current_bull_mamba_count > 0
+            array.push(bullish_mamba_sequences, current_bull_mamba_count)
+        if current_bear_mamba_count > 0
+            array.push(bearish_mamba_sequences, current_bear_mamba_count)
+    else if not is_tracking_mamba and current_non_mamba_count > 0
+        array.push(non_mamba_sequences, current_non_mamba_count)
+    
+    // Calculate average sequence lengths
+    mamba_avg = array.size(mamba_sequences) > 0 ? array.sum(mamba_sequences) / array.size(mamba_sequences) : 0
+    non_mamba_avg = array.size(non_mamba_sequences) > 0 ? array.sum(non_mamba_sequences) / array.size(non_mamba_sequences) : 0
+    bull_mamba_avg = array.size(bullish_mamba_sequences) > 0 ? array.sum(bullish_mamba_sequences) / array.size(bullish_mamba_sequences) : 0
+    bear_mamba_avg = array.size(bearish_mamba_sequences) > 0 ? array.sum(bearish_mamba_sequences) / array.size(bearish_mamba_sequences) : 0
+    
+    // Round to 1 decimal place for display
+    mamba_avg_display = math.round(mamba_avg * 10) / 10
+    non_mamba_avg_display = math.round(non_mamba_avg * 10) / 10
+    bull_mamba_avg_display = math.round(bull_mamba_avg * 10) / 10
+    bear_mamba_avg_display = math.round(bear_mamba_avg * 10) / 10
+    
+    // Current trend determination
+    isAbove50_current = close > ema50
+    
+    // Create separate labels for bullish and bearish trends
+    if isAbove50_current
+        // Bullish trend - create upper label
+        bull_label_text = "BullMamba " + str.tostring(bull_mamba_avg_display) + "X\n" +
+                          "NonMamba " + str.tostring(non_mamba_avg_display) + "X"
+        
+        // Add original bullish count if present
+        if bullMoveCount >= 2
+            bull_label_text := bull_label_text + "\nCount: " + str.tostring(bullMoveCount) + "X"
+        
+        // Position above the price
+        bull_label_placement = high + (tr * 2.0)
+        
+        // Create the bullish label
+        label.new(bar_index, bull_label_placement, bull_label_text, 
+                 color=color.new(color.green, 20), 
+                 style=label.style_label_down, 
+                 textcolor=color.white, 
+                 size=size.normal)
+        
+        // Optional: Add max streak info if significant
+        if array.size(bullish_mamba_sequences) > 0
+            max_bull_mamba = array.max(bullish_mamba_sequences)
+            if max_bull_mamba >= 3
+                label.new(bar_index - 2, bull_label_placement + (tr * 1.5), "MaxBull: " + str.tostring(max_bull_mamba),  color=color.new(color.green, 20), style=label.style_label_down, textcolor=color.white, size=size.small)
+    else
+        // Bearish trend - create lower label
+        bear_label_text = "BearMamba " + str.tostring(bear_mamba_avg_display) + "X\n" + "NonMamba " + str.tostring(non_mamba_avg_display) + "X"
+        
+        // Add original bearish count if present
+        if bearMoveCount >= 2
+            bear_label_text := bear_label_text + "\nCount: " + str.tostring(bearMoveCount) + "X"
+        
+        // Position below the price
+        bear_label_placement = low - (tr * 3.0)
+        
+        // Create the bearish label
+        label.new(bar_index, bear_label_placement, bear_label_text, 
+                 color=color.new(color.red, 20), 
+                 style=label.style_label_up, 
+                 textcolor=color.white, 
+                 size=size.normal)
+        
+        // Optional: Add max streak info if significant
+        if array.size(bearish_mamba_sequences) > 0
+            max_bear_mamba = array.max(bearish_mamba_sequences)
+            if max_bear_mamba >= 3
+                label.new(bar_index - 2, bear_label_placement - (tr * 1.5), 
+                         "MaxBear: " + str.tostring(max_bear_mamba), 
+                         color=color.new(color.red, 20), 
+                         style=label.style_label_up, 
+                         textcolor=color.white, 
+                         size=size.small)
+    
+    // Summary label with overall stats (optional, can be commented out if not needed)
+    summary_text = "All Mamba " + str.tostring(mamba_avg_display) + "X"
+    summary_placement = isAbove50_current ? high + (tr * 4.0) : low - (tr * 5.0)
+    summary_style = isAbove50_current ? label.style_label_down : label.style_label_up
+    
+    label.new(bar_index - 4, summary_placement, summary_text, 
+             color=color.new(color.blue, 20), 
+             style=summary_style, 
+             textcolor=color.white, 
+             size=size.small)
