@@ -1,0 +1,30 @@
+//@version=5
+indicator("Setbull - All in one indicator", overlay=true)
+
+// Custom color definition
+yellowGold = color.new(#FDDA0D , 0)
+
+// Calculate EMAs
+ema5 = ta.ema(close, 5)
+ema9 = ta.ema(close, 9)
+ema50 = ta.ema(close, 50)
+ema375 = ta.ema(close, 375)
+ema675 = ta.ema(close, 675)
+
+// Plot EMAs with specified colors
+plot(ema5, "5 EMA", color=yellowGold, linewidth=1)
+plot(ema9, "9 EMA", color=color.black, linewidth=1)
+plot(ema50, "50 EMA", color=color.blue, linewidth=1)
+plot(ema375, "375 EMA", color=yellowGold, linewidth=3)
+plot(ema675, "675 EMA", color=color.black, linewidth=3)
+
+// Add text labels
+var label daily9Label = na
+var label daily5Label = na
+
+if barstate.islast
+    daily9Label := label.new(bar_index, ema675, text="Daily 9EMA Demand/Supply", color=color.new(color.black, 100), style=label.style_label_down, textcolor=color.black)
+    daily5Label := label.new(bar_index, ema375, text="Daily 5EMA Demand/Supply", color=color.new(yellowGold, 100), style=label.style_label_down, textcolor=color.black)
+    
+    label.delete(daily9Label[1])
+    label.delete(daily5Label[1])
