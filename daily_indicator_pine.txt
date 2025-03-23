@@ -1,0 +1,175 @@
+//@version=5
+indicator("SETBULL-DAILY", overlay=true)
+
+// .....................................................................
+// OAH OAL INDICATOR
+// .....................................................................
+
+prev_high = ta.highest(high[1], 1)
+prev_low = ta.lowest(low[1], 1)
+prev_60pct = prev_low + ((prev_high - prev_low) * 0.6)
+
+// OAH Selling Pattern
+is_oah_selling = open > prev_60pct and close < open
+
+// OAL Buying Pattern
+is_oal_buying = open < prev_60pct and close > open
+
+// Using lighter colors
+light_red = color.new(color.red, 54)   
+light_green = color.new(color.green, 54)
+
+// Plot patterns
+plotshape(is_oah_selling, style=shape.triangledown, location=location.abovebar, color=light_red, size=size.small)
+plotshape(is_oal_buying, style=shape.triangleup, location=location.belowbar, color=light_green, size=size.small)
+
+// Alert conditions
+alertcondition(is_oah_selling, message="OAH Selling pattern detected")
+alertcondition(is_oal_buying, message="OAL Buying pattern detected")
+
+// .....................................................................
+// >5% PRICE MOVEMENT INDICATOR
+// .....................................................................
+
+// Input for customizing the percentage thresholds
+var bullPctChange = input.float(title="Bullish Move Threshold", defval=5.0, minval=0.1, step=0.1)
+var bearPctChange = input.float(title="Bearish Move Threshold", defval=3.0, minval=0.1, step=0.1)
+
+// Calculate percentage change from open to close
+percentMove = ((close - open) / open) * 100
+
+// Determine significant moves
+isBigUpMove = percentMove >= bullPctChange    // 5% for bullish
+isBigDownMove = percentMove <= -bearPctChange  // 3% for bearish
+
+// Plot arrows for significant moves
+plotarrow(isBigUpMove ? 1 : na, title="Up Move", colorup=light_green, maxheight=25, minheight=25)
+plotarrow(isBigDownMove ? -1 : na, title="Down Move", colordown=light_red, maxheight=25, minheight=25)
+
+// .....................................................................
+// >5% TREND QUALITY INDICATOR
+// .....................................................................
+
+// Constants
+var LOOKBACK_PERIOD = 10
+var EMA9_LENGTH = 9
+var EMA50_LENGTH = 50
+var EMA_CHECK_DAYS = 5
+
+// Calculate EMAs
+ema9 = ta.ema(close, EMA9_LENGTH)
+ema50 = ta.ema(close, EMA50_LENGTH)
+
+// Function to analyze bullish trend quality
+isBullishQualityTrend() =>
+    var int belowEmaCount = 0
+    var bool allAboveEma = true
+    var bool hadValidPullback = false
+    var bool above50Ema = true
+    
+    // Check last 5 days above 50 EMA
+    for i = 0 to EMA_CHECK_DAYS-1
+        if close[i] < ema50[i]
+            above50Ema := false
+    
+    // Reset for 9 EMA analysis
+    belowEmaCount := 0
+    allAboveEma := true
+    hadValidPullback := false
+    
+    // Analyze last 10 days for 9 EMA relationship
+    for i = 1 to LOOKBACK_PERIOD
+        if close[i] < ema9[i]
+            belowEmaCount := belowEmaCount + 1
+            allAboveEma := false
+            
+            if i > 1 and close[i-1] > ema9[i-1]
+                hadValidPullback := true
+    
+    // Combined conditions for bullish quality trend
+    isValid = close > ema9 and 
+             (allAboveEma or hadValidPullback) and 
+             belowEmaCount <= 3 and    
+             above50Ema              // Must be above 50 EMA for last 5 days
+
+    isValid
+
+// Function to analyze bearish trend quality
+isBearishQualityTrend() =>
+    var int aboveEmaCount = 0
+    var bool allBelowEma = true
+    var bool hadValidRally = false
+    var bool below50Ema = true
+    
+    // Check last 5 days below 50 EMA
+    for i = 0 to EMA_CHECK_DAYS-1
+        if close[i] > ema50[i]
+            below50Ema := false
+    
+    // Reset for 9 EMA analysis
+    aboveEmaCount := 0
+    allBelowEma := true
+    hadValidRally := false
+    
+    // Analyze last 10 days for 9 EMA relationship
+    for i = 1 to LOOKBACK_PERIOD
+        if close[i] > ema9[i]
+            aboveEmaCount := aboveEmaCount + 1
+            allBelowEma := false
+            
+            if i > 1 and close[i-1] < ema9[i-1]
+                hadValidRally := true
+    
+    // Combined conditions for bearish quality trend
+    isValid = close < ema9 and 
+             (allBelowEma or hadValidRally) and 
+             aboveEmaCount <= 3 and
+             below50Ema              // Must be below 50 EMA for last 5 days
+
+    isValid
+
+// Plot conditions only on the last bar
+light_blue = color.new(color.blue, 54)   
+if barstate.islast
+    if isBullishQualityTrend()
+        label.new(bar_index, high + 3, "✓", color=light_blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+    if isBearishQualityTrend()
+        label.new(bar_index, low - 3, "✓", color=light_blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
+
+
+
+// .....................................................................
+// MAMBA MOVES DETECTOR (>5% bullish moves and >-3% bearish moves with trend)
+// .....................................................................
+
+// Function to count MAMBA moves in last N days
+countMambaMoves(lookback) =>
+    var int moveCount = 0
+    moveCount := 0
+    
+    isAbove50 = close > ema50
+    
+    for i = 0 to lookback-1
+        dayMove = ((close[i] - open[i]) / open[i]) * 100
+        
+        // Count only upside MAMBA moves above 50 EMA
+        if isAbove50 and dayMove >= 5.0 and close[i] > ema50[i]
+            moveCount += 1
+            
+        // Count only downside MAMBA moves below 50 EMA    
+        if not isAbove50 and dayMove <= -3.0 and close[i] < ema50[i]
+            moveCount += 1
+    
+    moveCount
+
+// Calculate counts
+moveCount = countMambaMoves(21)
+hasMambaMoves = moveCount >= 2
+tr = ta.tr
+
+placement = close > ema50 ? (high + (tr * 0.54)) : (low - (tr * 1.54))
+style = close > ema50 ? label.style_label_down : label.style_label_up
+
+// Plot MAMBA moves label
+if barstate.islast and hasMambaMoves
+    label.new(bar_index, placement, str.tostring(moveCount) + "X", color=color.black, style=style, textcolor=color.white, size=size.normal)
