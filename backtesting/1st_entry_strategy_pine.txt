@@ -5,6 +5,7 @@ strategy("MR First Entry Backtester", overlay=true, default_qty_type=strategy.pe
 // =======================================================================
 // Configuration Parameters
 // =======================================================================
+var int backTestStartBars = input.int(10, "Bars Back to Start Backtest", minval=0, tooltip="Number of bars back from current bar to start the backtest. Use 0 to include all bars.")
 var string rangeType = input.string("5MR", "Morning Range Type", options=["5MR", "15MR"])
 var bool respectTrend = input.bool(true, "Respect Trend (Buy above 50EMA, Sell below 50EMA)")
 var float stopLossPercent = input.float(0.5, "Stop Loss (% of entry price)", minval=0.1, step=0.1)
@@ -18,7 +19,7 @@ var float tp2Size = input.float(40.0, "Second Take Profit Size (%)", minval=5.0,
 
 // New input for tick size
 // Exact entry -> Above/below 5MR range
-var float tickSize = input.float(0.05, "Tick Size", minval=0.01, step=0.01)
+var float tickSize = input.float(0.01, "Tick Size", minval=0.01, step=0.01)
 var int tickBuffer = input.int(5, "Entry Buffer in Ticks", minval=1, step=1)
 var float commissionPerShare = input.float(0.0, "Commission Per Share", minval=0.0, step=0.01)
 
@@ -32,7 +33,6 @@ var color shortColor = input.color(color.red, "Short Color")
 var int atrLength = input.int(14, "ATR Length", minval=1)
 var float atrToMRRatioThreshold = input.float(3.0, "ATR/MR Ratio Threshold", minval=1.0, step=0.5)
 prevATR = request.security(syminfo.tickerid, "D", ta.atr(atrLength)[1])
-var int emaLength = input.int(50, "EMA Length for Trend", minval=5)
 var int lookbackPeriod = input.int(27, "Lookback Period (Days)", minval=1)
 
 // Maximum number of bars to analyze (27 days worth of 5-min bars)
@@ -48,28 +48,23 @@ if not is_5min_timeframe
 // Time-based session definitions
 // TODO: Add strategy trading hours also so that I can define which strategy works in which hours. 
 isTradingHours = (time >= timestamp(year, month, dayofmonth, 9, 15, 0)) and (time <= timestamp(year, month, dayofmonth, 15, 30, 0))
-
 is5MRPeriod = (time >= timestamp(year, month, dayofmonth, 9, 15, 0)) and (time < timestamp(year, month, dayofmonth, 9, 20, 0))
-
 is15MRPeriod = (time >= timestamp(year, month, dayofmonth, 9, 15, 0)) and (time < timestamp(year, month, dayofmonth, 9, 30, 0))
 
 // VERY IMPORTANT
 // This is where I'm defining the exact 9:20AM trade time.
 isEntryAllowed = (rangeType == "5MR") ? (time >= timestamp(year, month, dayofmonth, 9, 20, 0)) : (time >= timestamp(year, month, dayofmonth, 9, 30, 0))
-
 isLastCandleOfDay = (time >= timestamp(year, month, dayofmonth, 15, 15, 0)) and (time < timestamp(year, month, dayofmonth, 15, 20, 0))
-
 isNewTradingDay = ta.change(dayofmonth) != 0 or (na(dayofmonth[1]) and not na(dayofmonth))
 
 // =======================================================================
 // Daily Trend tracking 
 // =======================================================================
 // Daily canndle 50 EMA based trend 
-var float ema50 = request.security(syminfo.tickerid, "D", ta.ema(close, emaLength)[1], barmerge.gaps_off, barmerge.lookahead_off)
-prevDay50EMA = request.security(syminfo.tickerid, "D", ta.ema(close, emaLength)[1], barmerge.gaps_off, barmerge.lookahead_off)
-var bool isAboveEMA = close > prevDay50EMA
-// tells whether we are trading Bullish stocks or bearish stocks based on Daily 50 EMA. 
-var string currentDailyTrend = isAboveEMA ? "BULLISH" : "BEARISH"
+var bool dailyTrendBullish = na
+var string currentDailyTrend = na
+prevDay50EMA = request.security(syminfo.tickerid, "D", ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
+prevDayClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_off)
 
 // Morning Range levels
 var float mrHigh = 0.0
@@ -82,6 +77,7 @@ var float longEntryPrice = 0.0
 var float shortEntryPrice = 0.0
 
 // Trade management
+var float initRisk = 30.0 // FIXED RISK
 var float quantity = 0
 var float tp1_quantity = 0.0
 var float tp2_quantity = 0.0
@@ -106,7 +102,7 @@ var float stopPrice = 0.0
 var float tp1Price = 0.0 // take at 1:3
 var float tp2Price = 0.0 // take at 1:5
 var float tp3Price = 0.0 // take at 1:7
-var float riskAmount = 30.0 // start from 30/-
+var float riskPoints = 0.0
 var float tp1_pnl = 0.0
 var float tp2_pnl = 0.0
 var float tp3_pnl = 0.0
@@ -147,6 +143,10 @@ var float todayPnL = 0.0
 var bool dayWon = false
 var bool dayLost = false
 
+var int totalAvailableBacktestBars = 10060
+var int startBacktestBar = totalAvailableBacktestBars - (backTestStartBars * 75)
+var int startBarIndex = 0
+
 // =======================================================================
 // Helper Functions
 // =======================================================================
@@ -159,13 +159,13 @@ logDebug(message) =>
         label.new(bar_index, high, message, color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.small)
     message
 
-// =======================================================================
-// Trend Determination
-// =======================================================================
-// Calculate 50 EMA
-// ema50 := ta.ema(close, emaLength)
-isAboveEMA := close > ema50
-currentDailyTrend := isAboveEMA ? "BULLISH" : "BEARISH"
+
+// SCRIPT STARTS
+// Create a condition to check if we should process the current bar
+var bool isBacktestActive = false
+if bar_index == startBacktestBar
+    isBacktestActive := true
+log.info("bar_index: " + str.tostring(bar_index) + " backTestStartBars: " + str.tostring(backTestStartBars))
 
 // Update ATR daily
 // LOGIC: As soon as 9:15AM passes. The very next MINUTE. 9:16AM candle, calcaulate ATR of previous 
@@ -173,14 +173,16 @@ currentDailyTrend := isAboveEMA ? "BULLISH" : "BEARISH"
 if is5MRPeriod and time >= timestamp(year, month, dayofmonth, 9, 15, 0) and time < timestamp(year, month, dayofmonth, 9, 16, 0)
     atr := prevATR  // Get previous day's ATR at the start of each day
 
-// Plot EMA
-plot(ema50, "50 EMA", color=color.blue, linewidth=1)
-
 // =======================================================================
 // Morning Range Calculation
 // =======================================================================
 // Reset MR values and trade status on new trading day
-if isNewTradingDay
+if isNewTradingDay or na(dailyTrendBullish)
+
+    // Set trend for the entire day
+    dailyTrendBullish := prevDayClose > prevDay50EMA
+    currentDailyTrend := dailyTrendBullish ? "BULLISH" : "BEARISH"
+    
     mrHigh := 0.0
     mrLow := 0.0
     mrSize := 0.0
@@ -269,39 +271,35 @@ if mrCalculated
 // First Entry Strategy Logic - MODIFIED FOR SINGLE ENTRY PER DAY
 // EXECUTION LOGIC
 // =======================================================================
-// Check if we're within the lookback period
-var startBarIndex = 0
-if bar_index == 0
-    startBarIndex := bar_index
-var int barsFromStart = bar_index - startBarIndex
-var bool isWithinLookbackPeriod = barsFromStart <= maxLookbackBars
 
 // Only process trades if within lookback period
-if isWithinLookbackPeriod
+if isBacktestActive
     // Check for entry conditions - only if we haven't traded today
     if isEntryAllowed and mrRangeValid and not inLongTrade and not inShortTrade and mrCalculated and not tradedToday and barstate.isconfirmed
         // ******** LONG ENTRY **********
         // Long entry when price reaches the buffered entry price (5 ticks above MR high)
         // respectTrend and isAboveEMA
-        if high >= longEntryPrice and (respectTrend and isAboveEMA)
+        if high >= longEntryPrice and (not respectTrend or dailyTrendBullish) and currentDailyTrend == "BULLISH"
             entryPrice := longEntryPrice  // Using the buffered entry price
             stopPrice := entryPrice * (1 - stopLossPercent/100)
-            quantity := riskAmount / (entryPrice - stopPrice)
-            //riskAmount := entryPrice - stopPrice
-
-            // Calculate quantities for each TP level
-            tp1_quantity := (tp1Size/100) * quantity
-            tp2_quantity := (tp2Size/100) * quantity
-            tp3_quantity := quantity - tp1_quantity - tp2_quantity
+            riskPoints := entryPrice - stopPrice
             
-            tp1Price := entryPrice + (riskAmount * tp1RR)
-            tp2Price := entryPrice + (riskAmount * tp2RR)
-            tp3Price := entryPrice + (riskAmount * tp3RR)
+            tp1Price := entryPrice + (riskPoints * tp1RR)
+            tp2Price := entryPrice + (riskPoints * tp2RR)
+            tp3Price := entryPrice + (riskPoints * tp3RR)
             
             strategy.entry("First_Long", strategy.long, limit=longEntryPrice)
             inLongTrade := true
             tradedToday := true  // Mark that we've traded today
             longTrades := longTrades + 1
+
+            // Set quantity
+            quantity := initRisk / riskPoints
+
+            // Calculate quantities for each TP level
+            tp1_quantity := (tp1Size/100) * quantity
+            tp2_quantity := (tp2Size/100) * quantity
+            tp3_quantity := quantity - tp1_quantity - tp2_quantity
             
             // Add blue label to mark the breakout candle
             label.new(bar_index, high * 1.01, "BREAKOUT", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
@@ -317,14 +315,14 @@ if isWithinLookbackPeriod
         
         // Short entry when price reaches the buffered entry price (5 ticks below MR low)
         // ******** SHORT ENTRY **********
-        else if low <= shortEntryPrice and (respectTrend and not isAboveEMA)
+        else if low <= shortEntryPrice and (not respectTrend or not dailyTrendBullish) and currentDailyTrend == "BEARISH"
             entryPrice := shortEntryPrice  // Using the buffered entry price
             stopPrice := entryPrice * (1 + stopLossPercent/100)
-            riskAmount := stopPrice - entryPrice
+            riskPoints := stopPrice - entryPrice
             
-            tp1Price := entryPrice - (riskAmount * tp1RR)
-            tp2Price := entryPrice - (riskAmount * tp2RR)
-            tp3Price := entryPrice - (riskAmount * tp3RR)
+            tp1Price := entryPrice - (riskPoints * tp1RR)
+            tp2Price := entryPrice - (riskPoints * tp2RR)
+            tp3Price := entryPrice - (riskPoints * tp3RR)
             
             strategy.entry("First_Short", strategy.short, limit=shortEntryPrice)
             inShortTrade := true
@@ -332,20 +330,18 @@ if isWithinLookbackPeriod
             shortTrades := shortTrades + 1
 
             // Set quantity
-            quantity := riskAmount / (entryPrice - stopPrice)
+            quantity := initRisk / riskPoints
 
             // Calculate quantities for each TP level
             tp1_quantity := (tp1Size/100) * quantity
             tp2_quantity := (tp2Size/100) * quantity
             tp3_quantity := quantity - tp1_quantity - tp2_quantity
 
-
             // Reset PnL trackers
             tp1_pnl_abs := 0.0
             tp2_pnl_abs := 0.0
             tp3_pnl_abs := 0.0
             todayPnL_abs := 0.0
-            
             
             // Add blue label to mark the breakout candle
             label.new(bar_index, low * 0.99, "BREAKDOWN", color=color.blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
@@ -363,12 +359,6 @@ if isWithinLookbackPeriod
                          "\nStop: " + str.tostring(stopPrice, "#.##"), 
                          color=shortColor, style=label.style_label_down, textcolor=color.white)
     
-    // ************ NO NEED TO DO THIS ANYMORE ********************
-    // -------- WAS REQUIRED FOR DEBUGGING -------------------
-    // Log if we've already traded today
-    //else if isEntryAllowed and mrRangeValid and not inLongTrade and not inShortTrade and mrCalculated and tradedToday and enableLogs
-      //  if (high >= longEntryPrice and (not respectTrend or isAboveEMA)) or (low <= shortEntryPrice and (not respectTrend or not isAboveEMA))
-        //    lastLogMessage := logDebug("ENTRY SKIPPED - Already traded today")
 
 // =======================================================================
 // TRADE MANAGEMENT LOGIC
@@ -379,7 +369,7 @@ if inLongTrade
     if low <= stopPrice and not hitBreakeven
         strategy.close("First_Long", comment="SL")
         inLongTrade := false
-        todayPnL := -riskAmount / entryPrice * 100  // Convert to percentage
+        todayPnL := -riskPoints / entryPrice * 100  // Convert to percentage
         dayLost := true
         longLosses := longLosses + 1
         
@@ -390,12 +380,12 @@ if inLongTrade
             label.new(bar_index, low * 0.999, "SL", color=color.red, style=label.style_label_up, textcolor=color.white)
     
     // Move to breakeven after price reaches 1:1 R:R
-    if high >= entryPrice + riskAmount and not hitBreakeven
+    if high >= entryPrice + riskPoints and not hitBreakeven
         stopPrice := entryPrice
         hitBreakeven := true
         
-        if enableLogs
-            lastLogMessage := logDebug("LONG MOVED TO BREAKEVEN")
+        //if enableLogs
+          //  lastLogMessage := logDebug("LONG MOVED TO BREAKEVEN")
         
         if enableVisualLabels
             label.new(bar_index, low * 0.999, "BE", color=color.blue, style=label.style_label_up, textcolor=color.white)
@@ -529,12 +519,12 @@ if inShortTrade
             label.new(bar_index, high * 1.001, "SL\n₹" + str.tostring(math.round(sl_pnl_abs * 100) / 100), color=color.red, style=label.style_label_down, textcolor=color.white)
     
     // CONDITION 1: Price reached 1:1 R, move SL to BREAKEVEN
-    if low <= entryPrice - riskAmount and not hitBreakeven
+    if low <= entryPrice - riskPoints and not hitBreakeven
         stopPrice := entryPrice
         hitBreakeven := true
         
-        if enableLogs
-            lastLogMessage := logDebug("SHORT MOVED TO BREAKEVEN")
+        //if enableLogs
+          //  lastLogMessage := logDebug("SHORT MOVED TO BREAKEVEN")
         
         if enableVisualLabels
             label.new(bar_index, high * 1.001, "BE", color=color.blue, style=label.style_label_down, textcolor=color.white)
@@ -605,7 +595,7 @@ if inShortTrade
 // DAY END CLOSING AT 3:15PM - CLOSING MANAGEMENT
 // =======================================================================
 // End of Day closing logic
-if isLastCandleOfDay
+if isLastCandleOfDay and isBacktestActive
     // For long positions
     if inLongTrade
         // Calculate current P&L including partial exits
@@ -695,7 +685,7 @@ if isLastCandleOfDay
 // =======================================================================
 // End of Day Processing
 // =======================================================================
-if isLastCandleOfDay
+if isLastCandleOfDay and isBacktestActive
     if tradedToday
         executedDays := executedDays + 1
         
@@ -721,11 +711,10 @@ if isLastCandleOfDay
         // Display daily result
         if enableTradeLabels
             resultColor = dayWon ? color.green : color.red
-            resultText = dayWon ? "WIN: +" + str.tostring(math.round(todayPnL * 100) / 100) + "%" : "LOSS: " + str.tostring(math.round(todayPnL * 100) / 100) + "%"
+            resultText = dayWon ? "WIN: +" + str.tostring(math.round(todayPnL_abs * 100) / 100) : "LOSS: " + str.tostring(math.round(todayPnL_abs * 100) / 100)
             label.new(bar_index, close, resultText, color=resultColor, textcolor=color.white)
     else if enableLogs
         lastLogMessage := logDebug("DAY STATS: No trade executed today")
-    
     tradeDays := tradeDays + 1
     
     // Reset daily variables
@@ -793,21 +782,23 @@ if barstate.islast
     
     table.cell(resultsTable, 0, 7, "Expectancy:")
     expColor = expectancy > 0 ? color.green : color.red
-    table.cell(resultsTable, 1, 7, str.tostring(math.round(expectancy * 100) / 100) + "%", text_color=expColor)
+    table.cell(resultsTable, 1, 7, str.tostring(expectancy), text_color=expColor)
     
-    table.cell(resultsTable, 0, 8, "Long Trades:")
-    table.cell(resultsTable, 1, 8, str.tostring(longTrades) + " (" + str.tostring(longWins) + "W/" + str.tostring(longLosses) + "L)")
+    if dailyTrendBullish
+        table.cell(resultsTable, 0, 8, "Long Trades:")
+        table.cell(resultsTable, 1, 8, str.tostring(longTrades) + " (" + str.tostring(longWins) + "W/" + str.tostring(longLosses) + "L)")
+        
+        table.cell(resultsTable, 0, 9, "Long Win Rate:")
+        longWinRateColor = longWinRate >= 50 ? color.green : color.red
+        table.cell(resultsTable, 1, 9, str.tostring(math.round(longWinRate * 100) / 100) + "%", text_color=longWinRateColor)
     
-    table.cell(resultsTable, 0, 9, "Long Win Rate:")
-    longWinRateColor = longWinRate >= 50 ? color.green : color.red
-    table.cell(resultsTable, 1, 9, str.tostring(math.round(longWinRate * 100) / 100) + "%", text_color=longWinRateColor)
-    
-    table.cell(resultsTable, 0, 10, "Short Trades:")
-    table.cell(resultsTable, 1, 10, str.tostring(shortTrades) + " (" + str.tostring(shortWins) + "W/" + str.tostring(shortLosses) + "L)")
-    
-    table.cell(resultsTable, 0, 11, "Short Win Rate:")
-    shortWinRateColor = shortWinRate >= 50 ? color.green : color.red
-    table.cell(resultsTable, 1, 11, str.tostring(math.round(shortWinRate * 100) / 100) + "%", text_color=shortWinRateColor)
+    if not dailyTrendBullish
+        table.cell(resultsTable, 0, 10, "Short Trades:")
+        table.cell(resultsTable, 1, 10, str.tostring(shortTrades) + " (" + str.tostring(shortWins) + "W/" + str.tostring(shortLosses) + "L)")
+        
+        table.cell(resultsTable, 0, 11, "Short Win Rate:")
+        shortWinRateColor = shortWinRate >= 50 ? color.green : color.red
+        table.cell(resultsTable, 1, 11, str.tostring(math.round(shortWinRate * 100) / 100) + "%", text_color=shortWinRateColor)
     
     table.cell(resultsTable, 0, 12, "Max Consec. Wins:")
     table.cell(resultsTable, 1, 12, str.tostring(maxConsecutiveWins))
@@ -833,4 +824,4 @@ if barstate.islast
     table.cell(resultsTable, 1, 18, "₹" + str.tostring(math.round(largestLoss * 100) / 100), text_color=color.red)
     
     if enableLogs
-        lastLogMessage := logDebug("CURRENT TREND: " + currentDailyTrend + " (Close: " + str.tostring(close) + " EMA50: " + str.tostring(ema50) + ")")
+        lastLogMessage := logDebug("CURRENT TREND: " + currentDailyTrend + " (Close: " + str.tostring(close) + " EMA50: " + str.tostring(prevDay50EMA) + ")")
