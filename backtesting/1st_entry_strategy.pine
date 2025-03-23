@@ -302,7 +302,7 @@ if isBacktestActive
             tp3_quantity := quantity - tp1_quantity - tp2_quantity
             
             // Add blue label to mark the breakout candle
-            label.new(bar_index, high * 1.01, "BREAKOUT", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+            //label.new(bar_index, high * 1.01, "BREAKOUT", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
             
             if enableLogs
                 lastLogMessage := logDebug("LONG ENTRY - Price: " + str.tostring(entryPrice) + " Stop: " + str.tostring(stopPrice) + " TP1: " + str.tostring(tp1Price) + " TP2: " + str.tostring(tp2Price) + " TP3: " + str.tostring(tp3Price))
@@ -344,7 +344,7 @@ if isBacktestActive
             todayPnL_abs := 0.0
             
             // Add blue label to mark the breakout candle
-            label.new(bar_index, low * 0.99, "BREAKDOWN", color=color.blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
+            //label.new(bar_index, low * 0.99, "BREAKDOWN", color=color.blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
             
             if enableLogs
                 lastLogMessage := logDebug("SHORT ENTRY - Price: " + str.tostring(entryPrice) + 
