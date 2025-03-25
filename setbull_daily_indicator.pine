@@ -302,7 +302,7 @@ if barstate.islast
             bull_label_text := bull_label_text + "\nCount: " + str.tostring(bullMoveCount) + "X"
         
         // Position above the price
-        bull_label_placement = high + (tr * 2.0)
+        bull_label_placement = high + (tr * 1.0)
         
         // Create the bullish label
         label.new(bar_index, bull_label_placement, bull_label_text, 
@@ -315,7 +315,7 @@ if barstate.islast
         if array.size(bullish_mamba_sequences) > 0
             max_bull_mamba = array.max(bullish_mamba_sequences)
             if max_bull_mamba >= 3
-                label.new(bar_index - 2, bull_label_placement + (tr * 1.5), "MaxBull: " + str.tostring(max_bull_mamba),  color=color.new(color.green, 20), style=label.style_label_down, textcolor=color.white, size=size.small)
+                label.new(bar_index - 2, bull_label_placement + (tr * 1.5), "MaxBull Streak: " + str.tostring(max_bull_mamba),  color=color.new(color.green, 20), style=label.style_label_down, textcolor=color.white, size=size.small)
     else
         // Bearish trend - create lower label
         bear_label_text = "BearMamba " + str.tostring(bear_mamba_avg_display) + "X\n" + "NonMamba " + str.tostring(non_mamba_avg_display) + "X"
@@ -325,7 +325,7 @@ if barstate.islast
             bear_label_text := bear_label_text + "\nCount: " + str.tostring(bearMoveCount) + "X"
         
         // Position below the price
-        bear_label_placement = low - (tr * 3.0)
+        bear_label_placement = low - (tr * 1.0)
         
         // Create the bearish label
         label.new(bar_index, bear_label_placement, bear_label_text, 
@@ -339,7 +339,7 @@ if barstate.islast
             max_bear_mamba = array.max(bearish_mamba_sequences)
             if max_bear_mamba >= 3
                 label.new(bar_index - 2, bear_label_placement - (tr * 1.5), 
-                         "MaxBear: " + str.tostring(max_bear_mamba), 
+                         "MaxBear Streak: " + str.tostring(max_bear_mamba), 
                          color=color.new(color.red, 20), 
                          style=label.style_label_up, 
                          textcolor=color.white, 
@@ -347,7 +347,7 @@ if barstate.islast
     
     // Summary label with overall stats (optional, can be commented out if not needed)
     summary_text = "All Mamba " + str.tostring(mamba_avg_display) + "X"
-    summary_placement = isAbove50_current ? high + (tr * 4.0) : low - (tr * 5.0)
+    summary_placement = isAbove50_current ? high + (tr * 2.0) : low - (tr * 2.0)
     summary_style = isAbove50_current ? label.style_label_down : label.style_label_up
     
     label.new(bar_index - 4, summary_placement, summary_text, 

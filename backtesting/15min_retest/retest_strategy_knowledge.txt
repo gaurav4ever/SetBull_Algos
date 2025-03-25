@@ -1,0 +1,158 @@
+Phase 1: Detection Framework
+
+Calculate 5MR with clear high/low values
+Track breakouts with minimum 0.3% move beyond range
+Create visual indicators for range and breakout confirmation
+
+Phase 2: Retest Logic
+
+Track maximum price move after breakout (for qualification)
+Implement retest detection (price returning to within 0.1% of breakout level)
+Add retest qualification based on rejection patterns
+
+Phase 3: Entry System
+
+Implement entry logic on qualified retests
+Add confirmation requirements (close in breakout direction after retest)
+Integrate with existing risk management system
+
+Phase 4: Performance Tracking
+
+Track retest strategy performance separately
+Compare with first entry results
+Identify market conditions favoring each approach
+
+
+
+=====================================================================================================================
+
+Here's a summary of what Phase 1 implements:
+
+Global Configuration
+
+Strategy inputs for risk management, position sizing, visualization
+Retest-specific parameters for breakout and retest detection
+
+
+Time Management
+
+Session definitions for 5-minute Morning Range period
+Trading hours and day boundary detection
+
+
+Market Context
+
+Daily trend determination using 50 EMA
+
+
+Morning Range Calculation
+
+Identifies the 5-minute morning range (9:15-9:20)
+Calculates range size and validates quality using ATR/MR ratio
+
+
+Breakout Detection
+
+Tracks breakouts above MR high and below MR low
+Requires minimum percentage move (0.3% by default)
+Records maximum price excursion after breakouts
+
+
+Visualization
+
+Plots MR high and low lines
+Marks breakout points with triangles
+Optional debug logging
+
+
+=====================================================================================================================
+
+Here's a summary of what Phase 2 implements:
+
+Retest Tracking Variables
+
+Added variables to track detected retests in both directions
+Separate flags for detected vs. qualified retests
+Price and bar index tracking for retest points
+
+
+Pullback Detection Logic
+
+Detects when price pulls back to the MR high/low after a breakout
+Uses percentage-based tolerance (configurable via maxRetestDistance)
+Records the retest price and bar for entry logic
+
+
+Retest Qualification
+
+Ensures the retest is a true pullback, not a failed breakout
+For longs: Validates that price is retesting MR high from above
+For shorts: Validates that price is retesting MR low from below
+Requires a minimum initial breakout move before qualifying retests
+
+
+Visualization Enhancements
+
+Added dashed lines to show retest levels
+Added diamond markers to highlight retest points
+Different visual indicators for qualified vs. non-qualified retests
+Debug logging with retest details
+
+
+
+This phase focuses purely on identifying valid retest opportunities. It correctly detects when price returns to test the breakout level after an initial move away, and validates whether this is a genuine retest (from the correct direction) rather than a failed breakout.
+
+
+=====================================================================================================================
+
+
+Here's a summary of what Phase 3 implements:
+
+Trade State Management
+
+Added variables to track trade status (active trades, stops, targets)
+Position sizing and quantity calculation
+Reset logic for all variables on new trading day
+
+
+Entry Logic
+
+Implemented precise entry conditions for both long and short trades
+For long entries: triggers when price shows rejection at MR high level (closes above)
+For short entries: triggers when price shows rejection at MR low level (closes below)
+Added trend alignment filter based on the respectTrend setting
+
+
+Risk Management
+
+Calculates stop loss based on percentage risk (0.75% default)
+Sets up three take profit levels at 1:3, 1:5, and 1:7 risk-reward ratios
+Implements position sizing based on money risk (initRisk parameter)
+Divides position into three parts for scaling out (10%, 40%, 50%)
+
+
+Order Execution
+
+Generates entry signals using strategy.entry()
+Ensures only one trade per day
+Prevents conflicting entries (no long and short at the same time)
+
+
+Visualization Enhancements
+
+Added entry markers with trade details
+Displays stop loss and take profit levels as lines
+Maintains visual trade tracking throughout the trade lifecycle
+
+
+
+=====================================================================================================================
+
+
+
+
+
+
+
+
+

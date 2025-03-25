@@ -9,6 +9,11 @@ var int backTestStartBars = input.int(10, "Bars Back to Start Backtest", minval=
 var string rangeType = input.string("5MR", "Morning Range Type", options=["5MR", "15MR"])
 var bool respectTrend = input.bool(true, "Respect Trend (Buy above 50EMA, Sell below 50EMA)")
 var float stopLossPercent = input.float(0.5, "Stop Loss (% of entry price)", minval=0.1, step=0.1)
+
+// POSITION SIZING 
+var bool useScaledEntry = input.bool(true, "Use Scaled Entry")
+var int entryLegs = input.int(5, "Number of Entry Legs", minval=2, maxval=10)
+
 var float tp1RR = input.float(3.0, "First Take Profit (R:R)", minval=1.0, step=0.5)
 var float tp2RR = input.float(5.0, "Second Take Profit (R:R)", minval=1.0, step=0.5)
 var float tp3RR = input.float(7.0, "Third Take Profit (R:R)", minval=1.0, step=0.5)
@@ -79,6 +84,11 @@ var float shortEntryPrice = 0.0
 // Trade management
 var float initRisk = 30.0 // FIXED RISK
 var float quantity = 0
+
+var float quantityPerLeg = 0
+var float remainingQty = 0
+
+
 var float tp1_quantity = 0.0
 var float tp2_quantity = 0.0
 var float tp3_quantity = 0.0
@@ -159,13 +169,42 @@ logDebug(message) =>
         label.new(bar_index, high, message, color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.small)
     message
 
+// Function to round price to nearest 0.05 or 0.00
+roundToNearestFiveOrZero(price) =>
+    // Multiply by 100 to work with integers
+    scaled = price * 100
+    // Round to nearest integer
+    rounded = math.round(scaled)
+    // Get the last digit
+    lastDigit = math.round(rounded) % 10
+    // Adjust to nearest 0 or 5
+    var adjusted = 0.0
+    if lastDigit < 3
+        adjusted := rounded - lastDigit
+    else if lastDigit < 8
+        adjusted := rounded - lastDigit + 5
+    else
+        adjusted := rounded - lastDigit + 10
+    // Convert back to original scale
+    adjusted / 100
+
+// Function to get ordinal suffix
+getOrdinal(n) =>
+    if n == 1
+        "1st"
+    else if n == 2
+        "2nd"
+    else if n == 3
+        "3rd"
+    else
+        str.tostring(n) + "th"
+
 
 // SCRIPT STARTS
 // Create a condition to check if we should process the current bar
 var bool isBacktestActive = false
 if bar_index == startBacktestBar
     isBacktestActive := true
-log.info("bar_index: " + str.tostring(bar_index) + " backTestStartBars: " + str.tostring(backTestStartBars))
 
 // Update ATR daily
 // LOGIC: As soon as 9:15AM passes. The very next MINUTE. 9:16AM candle, calcaulate ATR of previous 
@@ -283,32 +322,115 @@ if isBacktestActive
             entryPrice := longEntryPrice  // Using the buffered entry price
             stopPrice := entryPrice * (1 - stopLossPercent/100)
             riskPoints := entryPrice - stopPrice
+
+            // Set quantity
+            quantity := math.floor(initRisk / riskPoints)
             
             tp1Price := entryPrice + (riskPoints * tp1RR)
             tp2Price := entryPrice + (riskPoints * tp2RR)
             tp3Price := entryPrice + (riskPoints * tp3RR)
             
-            strategy.entry("First_Long", strategy.long, limit=longEntryPrice)
+            if useScaledEntry
+                // Use close price if entry price is not specified
+                actualEntryPrice = entryPrice <= 0 ? close : entryPrice
+                
+                // Calculate stop loss price based on trade side
+                var float slPrice = 0.0
+                slPrice := roundToNearestFiveOrZero(stopPrice)
+                
+                // Calculate the range for Fibonacci calculations
+                priceRange = math.abs(actualEntryPrice - slPrice)
+                
+                // Define Fibonacci levels
+                var fibLevels = array.new_float(6)
+                array.set(fibLevels, 0, 0)    // Stop Loss
+                array.set(fibLevels, 1, 1)    // Entry (1st leg)
+                array.set(fibLevels, 2, 1.25) // 2nd leg
+                array.set(fibLevels, 3, 1.5)  // 3rd leg
+                array.set(fibLevels, 4, 1.75) // 4th leg
+                array.set(fibLevels, 5, 2)    // 5th leg
+                
+                // Calculate quantity per leg
+                quantityPerLeg = math.floor(quantity / (entryLegs - 1))  // Exclude SL level
+                remainingQty = quantity
+                
+                // Store leg prices for visualization
+                var line[] legLines = array.new_line()
+                var label[] legLabels = array.new_label()
+                
+                // Clear previous visualization
+                array.clear(legLines)
+                array.clear(legLabels)
+                
+                // Place orders for each leg (skip the first level which is stop loss)
+                for i = 1 to math.min(entryLegs, arrxay.size(fibLevels) - 1)
+                    level = array.get(fibLevels, i)
+                    
+                    // Calculate leg price based on Fibonacci level
+                    var float legPrice = 0.0
+                    if i == 1
+                        // First entry is the entry price
+                        legPrice := actualEntryPrice
+                    else
+                        // Calculate price for additional entries
+                        // For Buy, additional entries are above the entry price
+                        legPrice := actualEntryPrice + priceRange * (level - 1)
+                        // Round to nearest 0.05 or 0.00
+                        //legPrice := roundToNearestFiveOrZero(legPrice)
+                    
+                    // Calculate leg quantity
+                    var float legQty = 0.0
+                    if i < entryLegs
+                        legQty := quantityPerLeg
+                    else
+                        legQty := remainingQty
+                    
+                    remainingQty := remainingQty - legQty
+                    
+                    // Place the order
+                    if i == 1
+                        strategy.entry("Long_Leg1", strategy.long, qty=legQty, limit=legPrice)
+                    else
+                        strategy.order("Long_Leg" + str.tostring(i), strategy.long, qty=legQty, limit=legPrice)
+                    
+                    // Create visualization for this leg
+                    if enableVisualLabels
+                        // Draw horizontal line at leg price
+                        log.info("adding fibo leg line at: " + str.tostring(legPrice))
+                        var legLine = line.new(x1=bar_index - 5, y1=legPrice, x2=bar_index + 20, y2=legPrice, color=color.new(longColor, 90), style=line.style_dotted, width=3)
+                        array.push(legLines, legLine)
+                        
+                        // Add label with leg description and quantity
+                        legDescription = i == 1 ? "1st Entry" : getOrdinal(i) + " Entry"
+                        var legLabel = label.new(x=bar_index + 15, y=legPrice, text=legDescription + "\n" + str.tostring(legQty) + " qty", color=color.new(longColor, 15), textcolor=color.white, style=label.style_label_left, size=size.small)
+                        array.push(legLabels, legLabel)
+                
+                // Visualize stop loss level
+                if enableVisualLabels
+                    var slLine = line.new(x1=bar_index - 5, y1=slPrice, x2=bar_index + 20, y2=slPrice, color=color.new(shortColor, 90), style=line.style_dashed, width=3)
+                    array.push(legLines, slLine)
+                    
+                    var slLabel = label.new(x=bar_index + 15, y=slPrice, text="Stop Loss", color=color.new(shortColor, 15), textcolor=color.white, style=label.style_label_left, size=size.small)
+                    array.push(legLabels, slLabel)
+
+            else 
+                // Traditional single entry
+                strategy.entry("First_Long", strategy.long, qty=quantity, limit=longEntryPrice)
+                // Calculate quantities for each TP level
+                tp1_quantity := (tp1Size/100) * quantity
+                tp2_quantity := (tp2Size/100) * quantity
+                tp3_quantity := quantity - tp1_quantity - tp2_quantity
+
+            // Update trade status
             inLongTrade := true
-            tradedToday := true  // Mark that we've traded today
+            tradedToday := true
             longTrades := longTrades + 1
-
-            // Set quantity
-            quantity := initRisk / riskPoints
-
-            // Calculate quantities for each TP level
-            tp1_quantity := (tp1Size/100) * quantity
-            tp2_quantity := (tp2Size/100) * quantity
-            tp3_quantity := quantity - tp1_quantity - tp2_quantity
-            
-            // Add blue label to mark the breakout candle
-            label.new(bar_index, high * 1.01, "BREAKOUT", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
             
             if enableLogs
-                lastLogMessage := logDebug("LONG ENTRY - Price: " + str.tostring(entryPrice) + " Stop: " + str.tostring(stopPrice) + " TP1: " + str.tostring(tp1Price) + " TP2: " + str.tostring(tp2Price) + " TP3: " + str.tostring(tp3Price))
+                lastLogMessage := logDebug("LONG ENTRY - Price: " + str.tostring(entryPrice) + " Stop: " + str.tostring(stopPrice) + " TP1: " + str.tostring(tp1Price) + " TP2: " + str.tostring(tp2Price) + " TP3: " + str.tostring(tp3Price) + " Qty: " + str.tostring(quantity) + (useScaledEntry ? " (Scaled)" : " (Single)"))
             
             // Visual entry marker
-            if enableVisualLabels
+            if enableVisualLabels and not useScaledEntry
                 label.new(bar_index, low * 0.999, "LONG\nEntry: " + str.tostring(entryPrice, "#.##") + 
                          "\nStop: " + str.tostring(stopPrice, "#.##"), 
                          color=longColor, style=label.style_label_up, textcolor=color.white)
@@ -344,7 +466,7 @@ if isBacktestActive
             todayPnL_abs := 0.0
             
             // Add blue label to mark the breakout candle
-            label.new(bar_index, low * 0.99, "BREAKDOWN", color=color.blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
+            //label.new(bar_index, low * 0.99, "BREAKDOWN", color=color.blue, style=label.style_label_up, textcolor=color.white, size=size.normal)
             
             if enableLogs
                 lastLogMessage := logDebug("SHORT ENTRY - Price: " + str.tostring(entryPrice) + 
