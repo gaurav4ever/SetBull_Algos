@@ -148,6 +148,69 @@ Maintains visual trade tracking throughout the trade lifecycle
 
 =====================================================================================================================
 
+Phase 4: 5MR Retest Strategy - Detailed Understanding
+Trade Management System
+Phase 4 implements a comprehensive trade management system that handles a trade from entry to exit, maximizing profits while managing risk. This phase is divided into three main components:
+1. Active Trade Management
+Once a trade is entered, the system actively manages its lifecycle through several key mechanisms:
+Stop Loss Management:
+
+Initial stop loss is placed at a fixed percentage (0.75%) from entry price
+When price reaches 1:1 risk-reward ratio, stop loss moves to breakeven
+After TP2 is hit, stop loss trails to lock in partial profits
+
+Take Profit System:
+
+Implements a three-tiered scaling out approach
+TP1: Takes 10% of position off at 1:3 risk-reward ratio
+TP2: Takes 40% of position off at 1:5 risk-reward ratio
+TP3: Takes remaining 50% off at 1:7 risk-reward ratio
+Each exit calculates and tracks its contribution to total PnL
+
+Visual Indicators:
+
+Marks significant events during the trade (SL, BE, TP1, TP2, TP3)
+Updates trade-related visualizations throughout the trade's lifecycle
+Shows the progression of the trade management process
+
+2. End of Day Processing
+The strategy includes safeguards for trades that remain open at the end of the trading day:
+Position Closing:
+
+Automatically closes any open positions at the end of the trading day (3:15-3:20 PM)
+Calculates partial P&L for trades with partial exits already taken
+Adds the end-of-day exit P&L to the total trade performance
+
+P&L Accounting:
+
+Combines P&L from partial exits with the final exit for accurate tracking
+Determines whether the day resulted in a win or loss
+Records the day's performance metrics for statistical tracking
+
+3. Performance Analysis
+The final component provides detailed statistical analysis of strategy performance:
+Comprehensive Metrics:
+
+Trade frequency: Total trading days vs. days with actual trades
+Win/loss ratios: Overall and broken down by direction (long/short)
+P&L metrics: Average win/loss, largest win/loss, net P&L
+Consistency metrics: Max consecutive wins/losses, win streaks
+
+Performance Visualization:
+
+Creates a detailed results table with color-coded performance metrics
+Automatically calculates derivative metrics like profit factor and expectancy
+Provides directional analysis to identify strategy biases
+Shows risk-adjusted performance statistics
+
+Market Psychology Insights:
+
+Tracks streaks to identify potential psychological impacts
+Separates long and short performance to reveal market biases
+Provides context for understanding when the strategy performs best/worst
+
+
+
 
 
 
