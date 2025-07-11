@@ -1,0 +1,971 @@
+//@version=5
+strategy("5MR Retest Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=100000, max_bars_back=2000, max_labels_count=500)
+
+// ========================================================================================================
+// 1. GLOBAL CONFIGURATION - Inputs and parameters common to all strategies
+// ========================================================================================================
+// Backtest timing parameters
+var int backTestStartBars = input.int(10, "Bars Back to Start Backtest", minval=0)
+var int startBarIndex = 0
+var int totalAvailableBacktestBars = 10060
+var int startBacktestBar = totalAvailableBacktestBars - (backTestStartBars * 75)
+var bool isBacktestActive = false
+
+// Strategy selection and options
+var bool respectTrend = input.bool(true, "Respect Trend (Buy above 50EMA, Sell below 50EMA)")
+
+// Retest strategy specific parameters
+var float maxRetestDistance = input.float(0.1, "Max Distance for Valid Retest (%)", minval=0.05, step=0.05)
+var float minBreakoutMove = input.float(0.3, "Min Move Away From Range (%)", minval=0.1, step=0.1)
+
+// Risk management parameters
+var float initRisk = input.float(30, "Risk in Money", minval=10, step=10000)
+var float stopLossPercent = input.float(0.75, "Stop Loss (% of entry price)", minval=0.1, step=0.1)
+var float tp1RR = input.float(3.0, "First Take Profit (R:R)", minval=1.0, step=0.5)
+var float tp2RR = input.float(5.0, "Second Take Profit (R:R)", minval=1.0, step=0.5)
+var float tp3RR = input.float(7.0, "Third Take Profit (R:R)", minval=1.0, step=0.5)
+var float tp1Size = input.float(10.0, "First Take Profit Size (%)", minval=5.0, step=5.0)
+var float tp2Size = input.float(40.0, "Second Take Profit Size (%)", minval=5.0, step=5.0)
+
+// Entry precision parameters
+var float tickSize = input.float(0.01, "Tick Size", minval=0.01, step=0.01)
+var int tickBuffer = input.int(5, "Entry Buffer in Ticks", minval=1, step=1)
+var float commissionPerShare = input.float(0.0, "Commission Per Share", minval=0.0, step=0.01)
+
+// ATR and visualization parameters
+var int atrLength = input.int(14, "ATR Length", minval=1)
+var float atrToMRRatioThreshold = input.float(3.0, "ATR/MR Ratio Threshold", minval=1.0, step=0.5)
+var int lookbackPeriod = input.int(27, "Lookback Period (Days)", minval=1)
+var bool enableVisualLabels = input.bool(true, "Show Entry/Exit Labels")
+var bool enableTradeLabels = input.bool(true, "Show Trade Stats Labels")
+var bool enableLogs = input.bool(true, "Enable Debug Logs")
+var color longColor = input.color(color.green, "Long Color")
+var color shortColor = input.color(color.red, "Short Color")
+
+// Global variables for ATR
+prevATR = request.security(syminfo.tickerid, "D", ta.atr(atrLength)[1])
+var float atr = ta.atr(atrLength)[1]
+
+// ========================================================================================================
+// 2. TIME MANAGEMENT - Session definitions
+// ========================================================================================================
+// Validate timeframe
+is_5min_timeframe = timeframe.period == "5"
+if not is_5min_timeframe
+    runtime.error("This script requires 5-minute timeframe")
+
+// Time-based session definitions
+isTradingHours = (time >= timestamp(year, month, dayofmonth, 9, 15, 0)) and (time <= timestamp(year, month, dayofmonth, 15, 30, 0))
+is5MRPeriod = (time >= timestamp(year, month, dayofmonth, 9, 15, 0)) and (time < timestamp(year, month, dayofmonth, 9, 20, 0))
+isLastCandleOfDay = (time >= timestamp(year, month, dayofmonth, 15, 15, 0)) and (time < timestamp(year, month, dayofmonth, 15, 20, 0))
+isNewTradingDay = ta.change(dayofmonth) != 0 or (na(dayofmonth[1]) and not na(dayofmonth))
+
+// ========================================================================================================
+// 3. MARKET CONTEXT - Daily trend analysis
+// ========================================================================================================
+// Daily trend determination
+var bool dailyTrendBullish = na
+var string currentDailyTrend = na
+prevDay50EMA = request.security(syminfo.tickerid, "D", ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
+prevDayClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+// ========================================================================================================
+// 4. HELPER FUNCTIONS
+// ========================================================================================================
+// Logging function
+logDebug(message) =>
+    if enableLogs
+        label.new(bar_index, high, message, color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.small)
+    message
+
+// Calculate percentage move
+percentMove(start, end) =>
+    100 * (end - start) / start
+
+// ========================================================================================================
+// 5. MORNING RANGE CALCULATION & BREAKOUT DETECTION - PHASE 1
+// ========================================================================================================
+// Morning Range variables
+var float mrHigh = 0.0
+var float mrLow = 0.0
+var float mrSize = 0.0
+var bool mrCalculated = false
+var bool mrRangeValid = false
+var string lastLogMessage = ""
+
+// Breakout tracking variables
+var bool longBreakoutDetected = false
+var bool shortBreakoutDetected = false
+var int longBreakoutBar = 0
+var int shortBreakoutBar = 0
+var float longBreakoutPrice = 0.0
+var float shortBreakoutPrice = 0.0
+var float longMaxMove = 0.0
+var float shortMaxMove = 0.0
+
+// Initialize variables on new trading day
+if isNewTradingDay or na(dailyTrendBullish)
+    // Set trend for the entire day
+    dailyTrendBullish := prevDayClose > prevDay50EMA
+    currentDailyTrend := dailyTrendBullish ? "BULLISH" : "BEARISH"
+    
+    // Reset MR values
+    mrHigh := 0.0
+    mrLow := 0.0
+    mrSize := 0.0
+    mrCalculated := false
+    mrRangeValid := false
+    
+    // Reset breakout detection
+    longBreakoutDetected := false
+    shortBreakoutDetected := false
+    longBreakoutBar := 0
+    shortBreakoutBar := 0
+    longBreakoutPrice := 0.0
+    shortBreakoutPrice := 0.0
+    longMaxMove := 0.0
+    shortMaxMove := 0.0
+    
+    if enableLogs
+        logDebug("New Day - Reset MR values. Trend: " + currentDailyTrend)
+
+// Update ATR at the start of each day
+if is5MRPeriod and time >= timestamp(year, month, dayofmonth, 9, 15, 0) and time < timestamp(year, month, dayofmonth, 9, 16, 0)
+    atr := prevATR
+
+// SCRIPT STARTS
+if bar_index == startBacktestBar
+    isBacktestActive := true
+
+// ========================================================================================================
+// 6. CALCULATE 5-MINUTE MORNING RANGE (9:15-9:20)
+// ========================================================================================================
+// Calculate 5MR during the first 5 minutes
+if is5MRPeriod
+    if not mrCalculated
+        // Record high/low for the first 5 min candle
+        mrHigh := high
+        mrLow := low
+        mrSize := mrHigh - mrLow
+        
+        // Validate range quality
+        float atrToMRRatio = mrSize > 0 ? atr / mrSize : 0
+        mrRangeValid := atrToMRRatio > atrToMRRatioThreshold
+        mrCalculated := true
+        
+        if enableLogs
+            logDebug("5MR Calculated - High: " + str.tostring(mrHigh) + " Low: " + str.tostring(mrLow) + " Size: " + str.tostring(mrSize) + " Valid: " + (mrRangeValid ? "Yes" : "No"))
+
+// ========================================================================================================
+// 7. BREAKOUT DETECTION
+// ========================================================================================================
+// Track breakouts when MR is calculated and valid
+if mrCalculated and mrRangeValid and barstate.isconfirmed
+    // Long breakout detection (price breaks above MR high)
+    if not longBreakoutDetected and high > mrHigh and percentMove(mrHigh, high) >= minBreakoutMove
+        longBreakoutDetected := true
+        longBreakoutBar := bar_index
+        longBreakoutPrice := high
+        longMaxMove := high
+        
+        if enableLogs
+            logDebug("LONG BREAKOUT DETECTED - Price: " + str.tostring(longBreakoutPrice) + " Move: " + str.tostring(percentMove(mrHigh, high)) + "%")
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "LONG BREAKOUT", color=color.green, style=label.style_label_down, textcolor=color.white, size=size.small)
+    
+    // Update maximum move after long breakout
+    if longBreakoutDetected and high > longMaxMove
+        longMaxMove := high
+    
+    // Short breakout detection (price breaks below MR low)
+    if not shortBreakoutDetected and low < mrLow and percentMove(mrLow, low) <= -minBreakoutMove
+        shortBreakoutDetected := true
+        shortBreakoutBar := bar_index
+        shortBreakoutPrice := low
+        shortMaxMove := low
+        
+        if enableLogs
+            logDebug("SHORT BREAKOUT DETECTED - Price: " + str.tostring(shortBreakoutPrice) + " Move: " + str.tostring(percentMove(mrLow, low)) + "%")
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "SHORT BREAKOUT", color=color.red, style=label.style_label_up, textcolor=color.white, size=size.small)
+    
+    // Update maximum move after short breakout
+    if shortBreakoutDetected and low < shortMaxMove
+        shortMaxMove := low
+
+// ========================================================================================================
+// 8. VISUALIZATION
+// ========================================================================================================
+// Plot MR levels if calculated
+if mrCalculated
+    var line mrhighLine = na
+    var line mrlowLine = na
+    
+    if barstate.isfirst or ta.change(dayofmonth) != 0
+        mrhighLine := line.new(bar_index, mrHigh, bar_index, mrHigh, color=color.green, width=2)
+        mrlowLine := line.new(bar_index, mrLow, bar_index, mrLow, color=color.red, width=2)
+    else
+        line.set_x2(mrhighLine, bar_index)
+        line.set_x2(mrlowLine, bar_index)
+        line.set_y1(mrhighLine, mrHigh)
+        line.set_y2(mrhighLine, mrHigh)
+        line.set_y1(mrlowLine, mrLow)
+        line.set_y2(mrlowLine, mrLow)
+
+// Plot breakout levels
+plotshape(longBreakoutDetected and bar_index == longBreakoutBar, title="Long Breakout", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortBreakoutDetected and bar_index == shortBreakoutBar, title="Short Breakout", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// ========================================================================================================
+// END OF PHASE 1 IMPLEMENTATION
+// ========================================================================================================
+
+// ========================================================================================================
+// 9. RETEST DETECTION - PHASE 2
+// ========================================================================================================
+// Retest tracking variables
+var bool longRetestDetected = false
+var bool shortRetestDetected = false
+var bool longRetestQualified = false
+var bool shortRetestQualified = false
+var int longRetestBar = 0
+var int shortRetestBar = 0
+var float longRetestPrice = 0.0
+var float shortRetestPrice = 0.0
+
+// Reset retest variables on new trading day
+if isNewTradingDay
+    // Reset retest detection
+    longRetestDetected := false
+    shortRetestDetected := false
+    longRetestQualified := false
+    shortRetestQualified := false
+    longRetestBar := 0
+    shortRetestBar := 0
+    longRetestPrice := 0.0
+    shortRetestPrice := 0.0
+    
+    if enableLogs
+        logDebug("New Day - Reset retest detection")
+
+// ========================================================================================================
+// 10. DETECT PULLBACKS TO BREAKOUT LEVELS
+// ========================================================================================================
+if mrCalculated and mrRangeValid and barstate.isconfirmed
+    // Detect retest of MR high (for long breakout)
+    if longBreakoutDetected and not longRetestDetected
+        // Check if there was a meaningful breakout first (minimum move away from MR high)
+        if percentMove(mrHigh, longMaxMove) >= minBreakoutMove
+            // Check if price has pulled back to MR high level (within tolerance)
+            float highRetestTolerance = mrHigh * (1 + maxRetestDistance / 100)
+            float lowRetestTolerance = mrHigh * (1 - maxRetestDistance / 100)
+            
+            if low <= highRetestTolerance and low >= lowRetestTolerance
+                longRetestDetected := true
+                longRetestBar := bar_index
+                longRetestPrice := math.min(high, mrHigh)  // Use the lower of high or MR high as entry point
+                
+                // Qualify the retest by checking if it's a pullback (not a failed breakout)
+                if high > mrHigh  // Ensure the retest is from above (not a breakdown through MR high)
+                    longRetestQualified := true
+                
+                if enableLogs
+                    logDebug("LONG RETEST DETECTED - Price: " + str.tostring(longRetestPrice) + 
+                           " Qualified: " + (longRetestQualified ? "Yes" : "No"))
+                
+                if enableVisualLabels and longRetestQualified
+                    label.new(bar_index, low * 0.999, "Long retest", color=color.green, style=label.style_label_up, textcolor=color.white, size=size.small)
+                else if enableVisualLabels
+                    label.new(bar_index, low * 0.999, "Long retest\nNot qualified", color=color.orange, style=label.style_label_up, textcolor=color.white, size=size.small)
+    
+    // Detect retest of MR low (for short breakout)
+    if shortBreakoutDetected and not shortRetestDetected
+        // Check if there was a meaningful breakout first (minimum move away from MR low)
+        if percentMove(mrLow, shortMaxMove) <= -minBreakoutMove
+            // Check if price has pulled back to MR low level (within tolerance)
+            float highRetestTolerance = mrLow * (1 + maxRetestDistance / 100)
+            float lowRetestTolerance = mrLow * (1 - maxRetestDistance / 100)
+            
+            if high >= lowRetestTolerance and high <= highRetestTolerance
+                shortRetestDetected := true
+                shortRetestBar := bar_index
+                shortRetestPrice := math.max(low, mrLow)  // Use the higher of low or MR low as entry point
+                
+                // Qualify the retest by checking if it's a pullback (not a failed breakout)
+                if low < mrLow  // Ensure the retest is from below (not a rally through MR low)
+                    shortRetestQualified := true
+                
+                if enableLogs
+                    logDebug("SHORT RETEST DETECTED - Price: " + str.tostring(shortRetestPrice) + 
+                           " Qualified: " + (shortRetestQualified ? "Yes" : "No"))
+                
+                if enableVisualLabels and shortRetestQualified
+                    label.new(bar_index, high * 1.001, "Short Retest", color=color.red, style=label.style_label_down, textcolor=color.white, size=size.small)
+                else if enableVisualLabels
+                    label.new(bar_index, high * 1.001, "Short Retest\n Not Qualified", color=color.orange, style=label.style_label_down, textcolor=color.white, size=size.small)
+
+// ========================================================================================================
+// 11. VISUALIZE RETEST PATTERNS
+// ========================================================================================================
+// Plot retest levels
+if longRetestQualified and bar_index >= longRetestBar
+    var line longRetestLine = na
+    
+    if barstate.isfirst or ta.change(dayofmonth) != 0 or not longRetestDetected[1]
+        longRetestLine := line.new(longRetestBar, mrHigh, bar_index, mrHigh, color=color.new(color.green, 50), width=1, style=line.style_dashed)
+    else
+        line.set_x2(longRetestLine, bar_index)
+        line.set_y1(longRetestLine, mrHigh)
+        line.set_y2(longRetestLine, mrHigh)
+
+if shortRetestQualified and bar_index >= shortRetestBar
+    var line shortRetestLine = na
+    
+    if barstate.isfirst or ta.change(dayofmonth) != 0 or not shortRetestDetected[1]
+        shortRetestLine := line.new(shortRetestBar, mrLow, bar_index, mrLow, color=color.new(color.red, 50), width=1, style=line.style_dashed)
+    else
+        line.set_x2(shortRetestLine, bar_index)
+        line.set_y1(shortRetestLine, mrLow)
+        line.set_y2(shortRetestLine, mrLow)
+
+// Plot shape markers for retest points
+plotshape(longRetestQualified and bar_index == longRetestBar, title="Long Retest", style=shape.diamond, location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortRetestQualified and bar_index == shortRetestBar, title="Short Retest", style=shape.diamond, location=location.abovebar, color=color.red, size=size.small)
+
+// ========================================================================================================
+// END OF PHASE 2 IMPLEMENTATION
+// ========================================================================================================
+
+// ========================================================================================================
+// 12. TRADE SETUP & ENTRY LOGIC - PHASE 3
+// ========================================================================================================
+// Trade state variables
+var bool tradedToday = false
+var bool inLongTrade = false
+var bool inShortTrade = false
+var float entryPrice = 0.0
+var float stopPrice = 0.0
+var float riskPoints = 0.0
+
+// Take profit levels
+var float tp1Price = 0.0
+var float tp2Price = 0.0
+var float tp3Price = 0.0
+
+// Position management
+var float quantity = 0.0
+var float tp1_quantity = 0.0
+var float tp2_quantity = 0.0
+var float tp3_quantity = 0.0
+
+// Trade tracking
+var bool hitBreakeven = false
+var bool hitTp1 = false
+var bool hitTp2 = false
+var float tp1_pnl = 0.0
+var float tp2_pnl = 0.0
+var float tp3_pnl = 0.0
+var float tp1_pnl_abs = 0.0
+var float tp2_pnl_abs = 0.0
+var float tp3_pnl_abs = 0.0
+var float todayPnL = 0.0
+var float todayPnL_abs = 0.0
+var bool dayWon = false
+var bool dayLost = false
+
+// Reset trade variables on new trading day
+if isNewTradingDay
+    // Reset trade state
+    tradedToday := false
+    inLongTrade := false
+    inShortTrade := false
+    entryPrice := 0.0
+    stopPrice := 0.0
+    riskPoints := 0.0
+    
+    // Reset take profit tracking
+    tp1Price := 0.0
+    tp2Price := 0.0
+    tp3Price := 0.0
+    
+    // Reset position sizing
+    quantity := 0.0
+    tp1_quantity := 0.0
+    tp2_quantity := 0.0
+    tp3_quantity := 0.0
+    
+    // Reset trade status variables
+    hitBreakeven := false
+    hitTp1 := false
+    hitTp2 := false
+    
+    // Reset PnL tracking
+    tp1_pnl := 0.0
+    tp2_pnl := 0.0
+    tp3_pnl := 0.0
+    tp1_pnl_abs := 0.0
+    tp2_pnl_abs := 0.0
+    tp3_pnl_abs := 0.0
+    todayPnL := 0.0
+    todayPnL_abs := 0.0
+    dayWon := false
+    dayLost := false
+    
+    if enableLogs
+        logDebug("New Day - Reset trade variables")
+
+// ========================================================================================================
+// 13. ENTRY SIGNAL GENERATION
+// ========================================================================================================
+// Only process entries if in active backtest period and not already in a trade
+if isBacktestActive and not tradedToday and barstate.isconfirmed
+    // LONG ENTRY on retest of MR high
+    if longRetestQualified and not inLongTrade and not inShortTrade
+        // Check trend alignment if required
+        bool trendAligned = not respectTrend or dailyTrendBullish
+        
+        // Entry confirmation: Price must show rejection at level (close above MR high)
+        if close > mrHigh and trendAligned
+            // Calculate entry price and risk
+            entryPrice := mrHigh
+            stopPrice := entryPrice * (1 - stopLossPercent/100)
+            riskPoints := entryPrice - stopPrice
+            
+            // Calculate take profit levels
+            tp1Price := entryPrice + (riskPoints * tp1RR)
+            tp2Price := entryPrice + (riskPoints * tp2RR)
+            tp3Price := entryPrice + (riskPoints * tp3RR)
+            
+            // Calculate position sizing
+            quantity := initRisk / riskPoints
+            tp1_quantity := (tp1Size/100) * quantity
+            tp2_quantity := (tp2Size/100) * quantity
+            tp3_quantity := quantity - tp1_quantity - tp2_quantity
+            
+            // Execute entry order
+            strategy.entry("Long_Retest", strategy.long, qty=quantity, limit=entryPrice)
+            inLongTrade := true
+            tradedToday := true
+            
+            if enableLogs
+                logDebug("LONG ENTRY - Price: " + str.tostring(entryPrice) + 
+                       " Stop: " + str.tostring(stopPrice) + 
+                       " TP1: " + str.tostring(tp1Price) + 
+                       " TP2: " + str.tostring(tp2Price) + 
+                       " TP3: " + str.tostring(tp3Price))
+            
+            // Visual entry marker
+            if enableVisualLabels
+                label.new(bar_index, low * 0.999, "LONG ENTRY\nEntry: " + str.tostring(entryPrice, "#.##") + 
+                         "\nStop: " + str.tostring(stopPrice, "#.##"), 
+                         color=longColor, style=label.style_label_up, textcolor=color.white)
+    
+    // SHORT ENTRY on retest of MR low
+    if shortRetestQualified and not inLongTrade and not inShortTrade
+        // Check trend alignment if required
+        bool trendAligned = not respectTrend or not dailyTrendBullish
+        
+        // Entry confirmation: Price must show rejection at level (close below MR low)
+        if close < mrLow and trendAligned
+            // Calculate entry price and risk
+            entryPrice := mrLow
+            stopPrice := entryPrice * (1 + stopLossPercent/100)
+            riskPoints := stopPrice - entryPrice
+            
+            // Calculate take profit levels
+            tp1Price := entryPrice - (riskPoints * tp1RR)
+            tp2Price := entryPrice - (riskPoints * tp2RR)
+            tp3Price := entryPrice - (riskPoints * tp3RR)
+            
+            // Calculate position sizing
+            quantity := initRisk / riskPoints
+            tp1_quantity := (tp1Size/100) * quantity
+            tp2_quantity := (tp2Size/100) * quantity
+            tp3_quantity := quantity - tp1_quantity - tp2_quantity
+            
+            // Execute entry order
+            strategy.entry("Short_Retest", strategy.short, qty=quantity, limit=entryPrice)
+            inShortTrade := true
+            tradedToday := true
+            
+            if enableLogs
+                logDebug("SHORT ENTRY - Price: " + str.tostring(entryPrice) + 
+                       " Stop: " + str.tostring(stopPrice) + 
+                       " TP1: " + str.tostring(tp1Price) + 
+                       " TP2: " + str.tostring(tp2Price) + 
+                       " TP3: " + str.tostring(tp3Price))
+            
+            // Visual entry marker
+            if enableVisualLabels
+                label.new(bar_index, high * 1.001, "SHORT ENTRY\nEntry: " + str.tostring(entryPrice, "#.##") + 
+                         "\nStop: " + str.tostring(stopPrice, "#.##"), 
+                         color=shortColor, style=label.style_label_down, textcolor=color.white)
+
+// ========================================================================================================
+// 14. ACTIVE TRADES VISUALIZATION
+// ========================================================================================================
+if inLongTrade or inShortTrade
+    // Plot stop loss line
+    var line stopLossLine = na
+    
+    if (inLongTrade or inShortTrade) and (barstate.isfirst or ta.change(dayofmonth) != 0 or not (inLongTrade[1] or inShortTrade[1]))
+        stopLossLine := line.new(bar_index, stopPrice, bar_index, stopPrice, color=color.red, width=1, style=line.style_dashed)
+    else if inLongTrade or inShortTrade
+        line.set_x2(stopLossLine, bar_index)
+        line.set_y1(stopLossLine, stopPrice)
+        line.set_y2(stopLossLine, stopPrice)
+    
+    // Plot take profit lines
+    var line tp1Line = na
+    var line tp2Line = na
+    var line tp3Line = na
+    
+    if (inLongTrade or inShortTrade) and (barstate.isfirst or ta.change(dayofmonth) != 0 or not (inLongTrade[1] or inShortTrade[1]))
+        tp1Line := line.new(bar_index, tp1Price, bar_index, tp1Price, color=color.green, width=1, style=line.style_dotted)
+        tp2Line := line.new(bar_index, tp2Price, bar_index, tp2Price, color=color.green, width=1, style=line.style_dotted)
+        tp3Line := line.new(bar_index, tp3Price, bar_index, tp3Price, color=color.green, width=1, style=line.style_dotted)
+    else if inLongTrade or inShortTrade
+        line.set_x2(tp1Line, bar_index)
+        line.set_y1(tp1Line, tp1Price)
+        line.set_y2(tp1Line, tp1Price)
+        
+        line.set_x2(tp2Line, bar_index)
+        line.set_y1(tp2Line, tp2Price)
+        line.set_y2(tp2Line, tp2Price)
+        
+        line.set_x2(tp3Line, bar_index)
+        line.set_y1(tp3Line, tp3Price)
+        line.set_y2(tp3Line, tp3Price)
+
+// ========================================================================================================
+// END OF PHASE 3 IMPLEMENTATION
+// ========================================================================================================
+
+// ========================================================================================================
+// 15. TRADE MANAGEMENT - PHASE 4
+// ========================================================================================================
+// Trade management for LONG positions
+if inLongTrade
+    // Stop loss hit
+    if low <= stopPrice and not hitBreakeven
+        strategy.close("Long_Retest", comment="SL")
+        inLongTrade := false
+        todayPnL := -riskPoints / entryPrice * 100  // Convert to percentage
+        dayLost := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG STOPPED OUT - Loss: " + str.tostring(todayPnL) + "%")
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "SL", color=color.red, style=label.style_label_up, textcolor=color.white)
+    
+    // Move to breakeven after price reaches 1:1 R:R
+    if high >= entryPrice + riskPoints and not hitBreakeven
+        stopPrice := entryPrice
+        hitBreakeven := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG MOVED TO BREAKEVEN")
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "BE", color=color.blue, style=label.style_label_up, textcolor=color.white)
+    
+    // Take profit 1 (10%)
+    if high >= tp1Price and not hitTp1
+        strategy.order("TP1_Long", strategy.long, qty=tp1_quantity, limit=tp1Price)
+        hitTp1 := true
+
+        // Calculate absolute PnL
+        tp1_pnl_abs := tp1_quantity * (tp1Price - entryPrice)
+        tp1_pnl_abs := tp1_pnl_abs - (tp1_quantity * commissionPerShare)  // Subtract commission
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG TP1 HIT - " + str.tostring(tp1Size) + "% (" + str.tostring(tp1_quantity) + " shares)" + " Profit: ₹" + str.tostring(tp1_pnl_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "TP1", color=color.green, style=label.style_label_down, textcolor=color.white)
+    
+    // Take profit 2 (40%)
+    if high >= tp2Price and not hitTp2
+        strategy.order("TP2_Long", strategy.long, qty=tp2_quantity, limit=tp2Price)
+        hitTp2 := true
+
+        // Calculate absolute PnL
+        tp2_pnl_abs := tp2_quantity * (tp2Price - entryPrice)
+        tp2_pnl_abs := tp2_pnl_abs - (tp2_quantity * commissionPerShare)  // Subtract commission
+        
+        // Move stop after TP2 to lock in more profit
+        stopPrice := entryPrice + (tp1Price - entryPrice) * 0.5
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG TP2 HIT - " + str.tostring(tp2Size) + "% (" + str.tostring(tp2_quantity) + " shares)" + " Profit: ₹" + str.tostring(tp2_pnl_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "TP2", color=color.green, style=label.style_label_down, textcolor=color.white)
+    
+    // Take profit 3 (remaining 50%)
+    if high >= tp3Price
+        strategy.close("Long_Retest", comment="TP3")
+        inLongTrade := false
+
+        // Calculate absolute PnL
+        tp3_pnl_abs := tp3_quantity * (tp3Price - entryPrice)
+        tp3_pnl_abs := tp3_pnl_abs - (tp3_quantity * commissionPerShare)  // Subtract commission
+        
+        // Calculate the blended P&L
+        float remaining_size = 100 - tp1Size - tp2Size
+        tp1_pnl := tp1Size/100 * (tp1Price - entryPrice)
+        tp2_pnl := tp2Size/100 * (tp2Price - entryPrice)
+        tp3_pnl := remaining_size/100 * (tp3Price - entryPrice)
+        todayPnL := (tp1_pnl + tp2_pnl + tp3_pnl) / entryPrice * 100
+        dayWon := true
+
+        // Total absolute PnL for the trade
+        todayPnL_abs := tp1_pnl_abs + tp2_pnl_abs + tp3_pnl_abs
+        dayWon := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG TP3 HIT - Remaining " + str.tostring(100-tp1Size-tp2Size) + "% (" + str.tostring(tp3_quantity) + " shares)" + " Profit: ₹" + str.tostring(tp3_pnl_abs) + " Total: ₹" + str.tostring(todayPnL_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "TP3", color=color.green, style=label.style_label_down, textcolor=color.white)
+
+// Trade management for SHORT positions
+if inShortTrade
+    // Stop loss hit
+    if high >= stopPrice and not hitBreakeven
+        strategy.close("Short_Retest", comment="SL")
+        inShortTrade := false
+        todayPnL := -riskPoints / entryPrice * 100  // Convert to percentage
+        dayLost := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("SHORT STOPPED OUT - Loss: " + str.tostring(todayPnL) + "%")
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "SL", color=color.red, style=label.style_label_down, textcolor=color.white)
+    
+    // Move to breakeven after price reaches 1:1 R:R
+    if low <= entryPrice - riskPoints and not hitBreakeven
+        stopPrice := entryPrice
+        hitBreakeven := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("SHORT MOVED TO BREAKEVEN")
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "BE", color=color.blue, style=label.style_label_down, textcolor=color.white)
+    
+    // Take profit 1 (10%)
+    if low <= tp1Price and not hitTp1
+        strategy.order("TP1_Short", strategy.short, qty=tp1_quantity, limit=tp1Price)
+        hitTp1 := true
+        
+        // Calculate absolute PnL
+        tp1_pnl_abs := tp1_quantity * (entryPrice - tp1Price)
+        tp1_pnl_abs := tp1_pnl_abs - (tp1_quantity * commissionPerShare)  // Subtract commission
+
+        if enableLogs
+            lastLogMessage := logDebug("SHORT TP1 HIT - " + str.tostring(tp1Size) + 
+                                  "% (" + str.tostring(tp1_quantity) + " shares)" + 
+                                  " Profit: ₹" + str.tostring(tp1_pnl_abs))
+    
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "TP1", color=color.green, style=label.style_label_up, textcolor=color.white)
+    
+    // Take profit 2 (40%)
+    if low <= tp2Price and not hitTp2
+        strategy.order("TP2_Short", strategy.short, qty=tp2_quantity, limit=tp2Price)
+        hitTp2 := true
+        
+        // Calculate absolute PnL
+        tp2_pnl_abs := tp2_quantity * (entryPrice - tp2Price)
+        tp2_pnl_abs := tp2_pnl_abs - (tp2_quantity * commissionPerShare)  // Subtract commission
+        
+        // Move stop after TP2 to lock in more profit
+        stopPrice := entryPrice - (entryPrice - tp1Price) * 0.5
+        
+        if enableLogs
+            lastLogMessage := logDebug("SHORT TP2 HIT - " + str.tostring(tp2Size) + "% (" + str.tostring(tp2_quantity) + " shares)" + " Profit: ₹" + str.tostring(tp2_pnl_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "TP2", color=color.green, style=label.style_label_up, textcolor=color.white)
+    
+    // Take profit 3 (remaining 50%)
+    if low <= tp3Price
+        strategy.close("Short_Retest", comment="TP3")
+        inShortTrade := false
+        
+        // Calculate absolute PnL
+        tp3_pnl_abs := tp3_quantity * (entryPrice - tp3Price)
+        tp3_pnl_abs := tp3_pnl_abs - (tp3_quantity * commissionPerShare)  // Subtract commission
+        
+        // Total absolute PnL for the trade
+        todayPnL_abs := tp1_pnl_abs + tp2_pnl_abs + tp3_pnl_abs
+        dayWon := true
+        
+        if enableLogs
+            lastLogMessage := logDebug("SHORT TP3 HIT - Remaining " + str.tostring(100-tp1Size-tp2Size) + "% (" + str.tostring(tp3_quantity) + " shares)" + " Profit: ₹" + str.tostring(tp3_pnl_abs) + " Total: ₹" + str.tostring(todayPnL_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "TP3", color=color.green, style=label.style_label_up, textcolor=color.white)
+
+// ========================================================================================================
+// 16. END OF DAY CLOSING
+// ========================================================================================================
+// End of Day closing logic
+if isLastCandleOfDay and isBacktestActive
+    // For long positions
+    if inLongTrade
+        // Calculate current P&L including partial exits
+        float remaining_size = 100.0
+        float currentPnl = 0.0
+        float remainingQty = quantity
+        
+        if hitTp1
+            remaining_size := remaining_size - tp1Size
+            remainingQty := remainingQty - tp1_quantity
+            currentPnl := currentPnl + tp1_pnl
+        
+        if hitTp2
+            remaining_size := remaining_size - tp2Size
+            remainingQty := remainingQty - tp2_quantity
+            currentPnl := currentPnl + tp2_pnl
+        
+        // Calculate P&L for EOD close
+        float eod_pnl_abs = remainingQty * (close - entryPrice)
+        eod_pnl_abs := eod_pnl_abs - (remainingQty * commissionPerShare)  // Subtract commission
+
+        // Calculate blended P&L
+        todayPnL_abs := tp1_pnl_abs + tp2_pnl_abs + eod_pnl_abs
+        
+        // Add current position P&L based on remaining size
+        float currentPositionPnl = remaining_size/100 * (close - entryPrice)
+        currentPnl := currentPnl + currentPositionPnl
+        
+        // Update daily P&L
+        todayPnL := currentPnl / entryPrice * 100
+        
+        // Mark as win or loss
+        if todayPnL > 0
+            dayWon := true
+        else
+            dayLost := true
+        
+        // Close position
+        strategy.close("Long_Retest", comment="EOD_CLOSE")
+        inLongTrade := false
+        
+        if enableLogs
+            lastLogMessage := logDebug("LONG EOD CLOSE - Remaining " + str.tostring(remainingQty) + " shares" + " P&L: ₹" + str.tostring(eod_pnl_abs) + " Total: ₹" + str.tostring(todayPnL_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, high * 1.001, "EOD", color=color.blue, style=label.style_label_down, textcolor=color.white)
+    
+    // For short positions
+    if inShortTrade
+        // Calculate remaining quantity
+        float remainingQty = quantity
+        
+        if hitTp1
+            remainingQty := remainingQty - tp1_quantity
+        if hitTp2
+            remainingQty := remainingQty - tp2_quantity
+        
+        // Calculate P&L for EOD close
+        float eod_pnl_abs = remainingQty * (entryPrice - close)
+        eod_pnl_abs := eod_pnl_abs - (remainingQty * commissionPerShare)  // Subtract commission
+
+        // Calculate blended P&L
+        todayPnL_abs := tp1_pnl_abs + tp2_pnl_abs + eod_pnl_abs
+        
+        if todayPnL_abs > 0
+            dayWon := true
+        else
+            dayLost := true
+        
+        // Close position
+        strategy.close("Short_Retest", comment="EOD_CLOSE")
+        inShortTrade := false
+        
+        if enableLogs
+            lastLogMessage := logDebug("SHORT EOD CLOSE - Remaining " + str.tostring(remainingQty) + " shares" + " P&L: ₹" + str.tostring(eod_pnl_abs) + " Total: ₹" + str.tostring(todayPnL_abs))
+        
+        if enableVisualLabels
+            label.new(bar_index, low * 0.999, "EOD", color=color.blue, style=label.style_label_up, textcolor=color.white)
+
+// ========================================================================================================
+// 17. PERFORMANCE TRACKING
+// ========================================================================================================
+// Performance statistics
+var float totalProfitAbs = 0.0
+var float totalLossAbs = 0.0
+var float largestWin = 0.0
+var float largestLoss = 0.0
+var float avgWinAbs = 0.0
+var float avgLossAbs = 0.0
+var int tradeDays = 0
+var int executedDays = 0
+var int profitDays = 0 
+var int lossDays = 0
+var float totalProfit = 0.0
+var float totalLoss = 0.0
+var int consecutiveWins = 0
+var int consecutiveLosses = 0
+var int maxConsecutiveWins = 0
+var int maxConsecutiveLosses = 0
+var int longTrades = 0
+var int shortTrades = 0
+var int longWins = 0
+var int longLosses = 0
+var int shortWins = 0
+var int shortLosses = 0
+
+// Update performance statistics at end of trading day
+if isLastCandleOfDay and isBacktestActive
+    tradeDays := tradeDays + 1
+    
+    if tradedToday
+        executedDays := executedDays + 1
+        
+        // Track trade outcomes
+        if dayWon
+            profitDays := profitDays + 1
+            totalProfit := totalProfit + todayPnL
+            totalProfitAbs := totalProfitAbs + todayPnL_abs
+            largestWin := math.max(largestWin, todayPnL_abs)
+            consecutiveWins := consecutiveWins + 1
+            consecutiveLosses := 0
+            maxConsecutiveWins := math.max(maxConsecutiveWins, consecutiveWins)
+            
+            // Update direction-specific stats
+            if inLongTrade
+                longWins := longWins + 1
+            if inShortTrade
+                shortWins := shortWins + 1
+                
+            if enableLogs
+                logDebug("DAY STATS: WIN - Profit: " + str.tostring(todayPnL_abs, "#.##"))
+                
+        else if dayLost
+            lossDays := lossDays + 1
+            totalLoss := totalLoss + todayPnL
+            totalLossAbs := totalLossAbs + math.abs(todayPnL_abs)
+            largestLoss := math.max(largestLoss, math.abs(todayPnL_abs))
+            consecutiveLosses := consecutiveLosses + 1
+            consecutiveWins := 0
+            maxConsecutiveLosses := math.max(maxConsecutiveLosses, consecutiveLosses)
+            
+            // Update direction-specific stats
+            if inLongTrade
+                longLosses := longLosses + 1
+            if inShortTrade
+                shortLosses := shortLosses + 1
+                
+            if enableLogs
+                logDebug("DAY STATS: LOSS - Loss: " + str.tostring(todayPnL_abs, "#.##"))
+        
+        // Display daily result if trade was executed
+        if enableTradeLabels
+            resultColor = dayWon ? color.green : color.red
+            resultText = dayWon ? "WIN: +" + str.tostring(math.round(todayPnL_abs * 100) / 100) : "LOSS: " + str.tostring(math.round(todayPnL_abs * 100) / 100)
+            label.new(bar_index, close, resultText, color=resultColor, textcolor=color.white)
+    
+    // Update trade counts
+    if inLongTrade
+        longTrades := longTrades + 1
+    if inShortTrade
+        shortTrades := shortTrades + 1
+        
+    // Calculate averages if we have data
+    avgWinAbs := profitDays > 0 ? totalProfitAbs / profitDays : 0
+    avgLossAbs := lossDays > 0 ? totalLossAbs / lossDays : 0
+
+// ========================================================================================================
+// 18. RESULTS VISUALIZATION
+// ========================================================================================================
+if barstate.islast
+    // Calculate metrics
+    float winRate = executedDays > 0 ? (profitDays / executedDays) * 100 : 0
+    float expectancy = (winRate/100 * avgWinAbs) - ((1 - winRate/100) * avgLossAbs)
+    float longWinRate = longTrades > 0 ? (longWins / longTrades) * 100 : 0
+    float shortWinRate = shortTrades > 0 ? (shortWins / shortTrades) * 100 : 0
+    float netPnL = totalProfitAbs - totalLossAbs
+    float profitFactor = totalLossAbs > 0 ? totalProfitAbs / totalLossAbs : 0
+    
+    // Create results table
+    var table resultsTable = table.new(position.bottom_right, 2, 20, border_width=1)
+    
+    // Table header
+    table.cell(resultsTable, 0, 0, "5MR Retest Strategy Results", text_color=color.white, bgcolor=color.blue)
+    table.cell(resultsTable, 1, 0, "", text_color=color.white, bgcolor=color.blue)
+    
+    // Statistics rows
+    table.cell(resultsTable, 0, 1, "Trading Days:")
+    table.cell(resultsTable, 1, 1, str.tostring(tradeDays))
+    
+    table.cell(resultsTable, 0, 2, "Executed Days:")
+    table.cell(resultsTable, 1, 2, str.tostring(executedDays))
+    
+    table.cell(resultsTable, 0, 3, "Win/Loss Days:")
+    table.cell(resultsTable, 1, 3, str.tostring(profitDays) + " / " + str.tostring(lossDays))
+    
+    table.cell(resultsTable, 0, 4, "Win Rate:")
+    winRateColor = winRate >= 50 ? color.green : color.red
+    table.cell(resultsTable, 1, 4, str.tostring(math.round(winRate * 10) / 10) + "%", text_color=winRateColor)
+    
+    table.cell(resultsTable, 0, 5, "Avg Win:")
+    table.cell(resultsTable, 1, 5, "₹" + str.tostring(math.round(avgWinAbs * 100) / 100), text_color=color.green)
+    
+    table.cell(resultsTable, 0, 6, "Avg Loss:")
+    table.cell(resultsTable, 1, 6, "₹" + str.tostring(math.round(avgLossAbs * 100) / 100), text_color=color.red)
+    
+    table.cell(resultsTable, 0, 7, "Profit Factor:")
+    profitFactorColor = profitFactor >= 1.5 ? color.green : (profitFactor >= 1 ? color.orange : color.red)
+    table.cell(resultsTable, 1, 7, str.tostring(math.round(profitFactor * 100) / 100), text_color=profitFactorColor)
+    
+    table.cell(resultsTable, 0, 8, "Expectancy:")
+    expColor = expectancy > 0 ? color.green : color.red
+    table.cell(resultsTable, 1, 8, "₹" + str.tostring(math.round(expectancy * 100) / 100), text_color=expColor)
+    
+    table.cell(resultsTable, 0, 9, "Long Trades:")
+    table.cell(resultsTable, 1, 9, str.tostring(longTrades) + " (" + str.tostring(longWins) + "W/" + str.tostring(longLosses) + "L)")
+    
+    table.cell(resultsTable, 0, 10, "Long Win Rate:")
+    longWinRateColor = longWinRate >= 50 ? color.green : color.red
+    table.cell(resultsTable, 1, 10, str.tostring(math.round(longWinRate * 10) / 10) + "%", text_color=longWinRateColor)
+    
+    table.cell(resultsTable, 0, 11, "Short Trades:")
+    table.cell(resultsTable, 1, 11, str.tostring(shortTrades) + " (" + str.tostring(shortWins) + "W/" + str.tostring(shortLosses) + "L)")
+    
+    table.cell(resultsTable, 0, 12, "Short Win Rate:")
+    shortWinRateColor = shortWinRate >= 50 ? color.green : color.red
+    table.cell(resultsTable, 1, 12, str.tostring(math.round(shortWinRate * 10) / 10) + "%", text_color=shortWinRateColor)
+    
+    table.cell(resultsTable, 0, 13, "Max Consec. Wins:")
+    table.cell(resultsTable, 1, 13, str.tostring(maxConsecutiveWins))
+    
+    table.cell(resultsTable, 0, 14, "Max Consec. Losses:")
+    table.cell(resultsTable, 1, 14, str.tostring(maxConsecutiveLosses))
+    
+    table.cell(resultsTable, 0, 15, "Total Profit:")
+    table.cell(resultsTable, 1, 15, "₹" + str.tostring(math.round(totalProfitAbs * 100) / 100), text_color=color.green)
+    
+    table.cell(resultsTable, 0, 16, "Total Loss:")
+    table.cell(resultsTable, 1, 16, "₹" + str.tostring(math.round(totalLossAbs * 100) / 100), text_color=color.red)
+    
+    table.cell(resultsTable, 0, 17, "Net P&L:")
+    netColor = netPnL >= 0 ? color.green : color.red
+    table.cell(resultsTable, 1, 17, "₹" + str.tostring(math.round(netPnL * 100) / 100), text_color=netColor)
+    
+    table.cell(resultsTable, 0, 18, "Largest Win:")
+    table.cell(resultsTable, 1, 18, "₹" + str.tostring(math.round(largestWin * 100) / 100), text_color=color.green)
+    
+    table.cell(resultsTable, 0, 19, "Largest Loss:")
+    table.cell(resultsTable, 1, 19, "₹" + str.tostring(math.round(largestLoss * 100) / 100), text_color=color.red)
+
+// ========================================================================================================
+// END OF PHASE 4 IMPLEMENTATION
+// ========================================================================================================

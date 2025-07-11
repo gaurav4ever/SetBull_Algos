@@ -1,0 +1,94 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Gaurav_setbull
+
+//@version=5
+strategy("VWAP Fading Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=100000)
+
+// ===================================================================
+// Configurable Inputs
+// ===================================================================
+deviation = input.float(1.0, "VWAP Deviation %", minval=0.1) / 100
+slPercent = input.float(0.5, "Stop Loss %", minval=0.1) / 100
+targetRR = input.float(1.5, "Target R:R", minval=0.5)
+lookbackDays = input.int(21, "Backtest Days", minval=1)
+
+t_start = timestamp("2023-01-01 00:00 +0530")  // required to anchor timestamp boundaries
+timeFilter = time >= (timenow - lookbackDays * 24 * 60 * 60 * 1000)
+
+// ===================================================================
+// VWAP Calculation (built-in)
+// ===================================================================
+vwap_val = ta.vwap
+plot(vwap_val, color=color.orange, title="VWAP")
+
+// ===================================================================
+// Trade Setup
+// ===================================================================
+isAboveVWAP = close > vwap_val * (1 + deviation)
+isBelowVWAP = close < vwap_val * (1 - deviation)
+
+// Entry Conditions
+longEntry = isBelowVWAP and timeFilter
+shortEntry = isAboveVWAP and timeFilter
+
+// Trade Parameters
+longSL = close * (1 - slPercent)
+longTP = close + (close - longSL) * targetRR
+shortSL = close * (1 + slPercent)
+shortTP = close - (shortSL - close) * targetRR
+
+// ===================================================================
+// Execute Strategy
+// ===================================================================
+if (longEntry)
+    strategy.entry("VWAP_Fade_Long", strategy.long)
+    strategy.exit("TP_SL_Long", from_entry="VWAP_Fade_Long", stop=longSL, limit=longTP)
+
+if (shortEntry)
+    strategy.entry("VWAP_Fade_Short", strategy.short)
+    strategy.exit("TP_SL_Short", from_entry="VWAP_Fade_Short", stop=shortSL, limit=shortTP)
+
+// ===================================================================
+// Performance Table (Executed on Last Bar)
+// ===================================================================
+var table resultsTable = table.new(position.bottom_right, 2, 10, border_width=1)
+if barstate.islast
+    wins = 0
+    losses = 0
+    totalProfit = 0.0
+    float largestWin = na
+    float largestLoss = na
+
+    for i = 0 to 99
+        pl = strategy.closedtrades.profit(i)
+        totalProfit += pl
+        if (pl > 0)
+            wins += 1
+            largestWin := na(largestWin) ? pl : math.max(largestWin, pl)
+        else
+            losses += 1
+            largestLoss := na(largestLoss) ? math.abs(pl) : math.max(largestLoss, math.abs(pl))
+
+    totalTrades = wins + losses
+    winRate = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : 0
+    avgProfit = wins > 0 ? totalProfit / wins : 0
+    avgLoss = losses > 0 ? totalProfit / losses : 0
+    expectancy = (winRate/100 * avgProfit) + ((1 - winRate/100) * avgLoss)
+
+    table.cell(resultsTable, 0, 0, "VWAP Fade Strategy", text_color=color.white, bgcolor=color.blue)
+    table.cell(resultsTable, 0, 1, "Total Trades")
+    table.cell(resultsTable, 1, 1, str.tostring(totalTrades))
+    table.cell(resultsTable, 0, 2, "Wins")
+    table.cell(resultsTable, 1, 2, str.tostring(wins))
+    table.cell(resultsTable, 0, 3, "Losses")
+    table.cell(resultsTable, 1, 3, str.tostring(losses))
+    table.cell(resultsTable, 0, 4, "Win Rate")
+    table.cell(resultsTable, 1, 4, str.tostring(math.round(winRate * 100) / 100) + "%")
+    table.cell(resultsTable, 0, 5, "Total P&L")
+    table.cell(resultsTable, 1, 5, str.tostring(math.round(totalProfit * 100) / 100))
+    table.cell(resultsTable, 0, 6, "Largest Win")
+    table.cell(resultsTable, 1, 6, str.tostring(math.round(largestWin * 100) / 100))
+    table.cell(resultsTable, 0, 7, "Largest Loss")
+    table.cell(resultsTable, 1, 7, str.tostring(math.round(largestLoss * 100) / 100))
+    table.cell(resultsTable, 0, 8, "Expectancy")
+    table.cell(resultsTable, 1, 8, str.tostring(expectancy))
