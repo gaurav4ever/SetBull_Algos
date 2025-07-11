@@ -1,0 +1,364 @@
+//@version=5
+indicator("Volatility Squeeze Alert v4.0", overlay=true)
+
+// ========================================
+// PHASE 1: Core BB Width Calculation
+// ========================================
+
+// Input parameters
+bb_period = input.int(20, "BB Period", minval=10, maxval=50, group="Bollinger Bands")
+bb_std_dev = input.float(2.0, "BB Standard Deviation", minval=1.0, maxval=3.0, group="Bollinger Bands")
+user_threshold = input.float(1.0, "Manual Threshold (%)", minval=0.1, maxval=10.0, step=0.1, group="Squeeze Detection")
+
+// Display settings
+show_bb_bands = input.bool(true, "Show Bollinger Bands", group="Visual Settings")
+show_squeeze_alerts = input.bool(true, "Show Squeeze Alerts", group="Visual Settings")
+alert_color = input.color(color.red, "Alert Color", group="Visual Settings")
+
+// ========================================
+// PHASE 2: Threshold Management System
+// ========================================
+
+// Threshold management settings
+use_map_thresholds = input.bool(true, "Use Map Thresholds", group="Threshold Management")
+show_threshold_info = input.bool(true, "Show Threshold Info", group="Threshold Management")
+
+// Create threshold map with top stocks from CSV analysis
+var threshold_map = map.new<string, float>()
+
+// Initialize map with top stocks from bb_width_analysis.csv
+if barstate.isfirst
+    // Top stocks with lowest p10 BB width values
+    map.put(threshold_map, "FACT", 2.21)
+    map.put(threshold_map, "JAICORPLTD", 0.28)
+    map.put(threshold_map, "TI", 1.06)
+    map.put(threshold_map, "NAVKARCORP", 0.39)
+    map.put(threshold_map, "DREAMFOLKS", 0.91)
+    map.put(threshold_map, "SHAREINDIA", 0.62)
+    map.put(threshold_map, "WALCHANNAG", 1.44)
+    map.put(threshold_map, "PARADEEP", 0.02)
+    map.put(threshold_map, "GREAVESCOT", 0.40)
+    map.put(threshold_map, "EMBDL", 0.25)
+    map.put(threshold_map, "PARACABLES", 0.14)
+    map.put(threshold_map, "BALUFORGE", 3.41)
+    map.put(threshold_map, "TVSSCS", 0.32)
+    map.put(threshold_map, "THOMASCOOK", 0.43)
+    map.put(threshold_map, "FIRSTCRY", 0.49)
+    map.put(threshold_map, "JTLIND", 0.22)
+    map.put(threshold_map, "MOBIKWIK", 0.48)
+    map.put(threshold_map, "ANANTRAJ", 1.81)
+    map.put(threshold_map, "ICIL", 0.56)
+    map.put(threshold_map, "DCBBANK", 0.13)
+    map.put(threshold_map, "ENGINERSIN", 0.56)
+    map.put(threshold_map, "RCF", 0.34)
+    map.put(threshold_map, "TDPOWERSYS", 1.46)
+    map.put(threshold_map, "POONAWALLA", 1.32)
+    map.put(threshold_map, "YATHARTH", 0.83)
+    map.put(threshold_map, "GRMOVER", 1.05)
+    map.put(threshold_map, "DBREALTY", 0.92)
+    map.put(threshold_map, "AVALON", 2.52)
+    map.put(threshold_map, "AVANTIFEED", 1.60)
+    map.put(threshold_map, "SUPRIYA", 1.56)
+    map.put(threshold_map, "KITEX", 0.97)
+    map.put(threshold_map, "QPOWER", 1.65)
+    map.put(threshold_map, "INOXGREEN", 0.50)
+    map.put(threshold_map, "MICEL", 0.11)
+    map.put(threshold_map, "OSWALAGRO", 0.38)
+    map.put(threshold_map, "SCHNEIDER", 2.86)
+    map.put(threshold_map, "TBZ", 0.65)
+    map.put(threshold_map, "DHANI", 0.23)
+    map.put(threshold_map, "JISLJALEQS", 0.18)
+    map.put(threshold_map, "HITECH", 0.13)
+    map.put(threshold_map, "LLOYDSENT", 0.22)
+    map.put(threshold_map, "STLTECH", 0.19)
+    map.put(threshold_map, "KALAMANDIR", 0.13)
+    map.put(threshold_map, "ASIANPAINT", 2.99)
+    map.put(threshold_map, "SANSTAR", 0.14)
+    map.put(threshold_map, "PREMEXPLN", 2.39)
+    map.put(threshold_map, "SAMMAANCAP", 0.36)
+    map.put(threshold_map, "RPOWER", 0.00)
+    map.put(threshold_map, "SUVEN", 1.10)
+    map.put(threshold_map, "CAMLINFINE", 1.36)
+    map.put(threshold_map, "AEROFLEX", 0.30)
+    map.put(threshold_map, "RELINFRA", 1.52)
+    map.put(threshold_map, "RAILTEL", 1.18)
+    map.put(threshold_map, "CUPID", 0.15)
+    map.put(threshold_map, "APOLLO", 0.00)
+    map.put(threshold_map, "SANGHVIMOV", 1.01)
+    map.put(threshold_map, "SURYODAY", 0.47)
+    map.put(threshold_map, "NORTHARC", 0.83)
+    map.put(threshold_map, "BBOX", 0.00)
+    map.put(threshold_map, "RBA", 0.09)
+    map.put(threshold_map, "MINDTECK", 1.17)
+    map.put(threshold_map, "GARUDA", 0.54)
+    map.put(threshold_map, "KEC", 2.07)
+    map.put(threshold_map, "TIMETECHNO", 1.47)
+    map.put(threshold_map, "AUBANK", 2.30)
+    map.put(threshold_map, "IDFCFIRSTB", 0.16)
+    map.put(threshold_map, "EIEL", 0.66)
+    map.put(threshold_map, "JINDWORLD", 0.13)
+    map.put(threshold_map, "VAIBHAVGBL", 0.72)
+    map.put(threshold_map, "BLUEJET", 1.36)
+    map.put(threshold_map, "EPL", 0.54)
+    map.put(threshold_map, "ASHOKA", 0.53)
+    map.put(threshold_map, "ELECTCAST", 0.38)
+    map.put(threshold_map, "QUADFUTURE", 1.42)
+    map.put(threshold_map, "VMM", 0.15)
+    map.put(threshold_map, "ASAHIINDIA", 1.95)
+    map.put(threshold_map, "JSFB", 0.97)
+    map.put(threshold_map, "ANURAS", 2.56)
+    map.put(threshold_map, "KTKBANK", 0.38)
+    map.put(threshold_map, "PNBGILTS", 0.30)
+    map.put(threshold_map, "SURYAROSNI", 1.08)
+    map.put(threshold_map, "GAEL", 0.32)
+    map.put(threshold_map, "ARVIND", 0.87)
+    map.put(threshold_map, "SDBL", 0.53)
+    map.put(threshold_map, "KNRCON", 0.48)
+    map.put(threshold_map, "ARKADE", 0.65)
+    map.put(threshold_map, "HIKAL", 0.87)
+    map.put(threshold_map, "SONATSOFTW", 0.59)
+    map.put(threshold_map, "DELTACORP", 0.17)
+    map.put(threshold_map, "NATIONALUM", 0.33)
+    map.put(threshold_map, "SGLTL", 0.67)
+    map.put(threshold_map, "BIOCON", 0.82)
+    map.put(threshold_map, "JAIBALAJI", 0.33)
+    map.put(threshold_map, "GATEWAY", 0.18)
+    map.put(threshold_map, "SYNGENE", 0.90)
+    map.put(threshold_map, "ELGIEQUIP", 1.34)
+    map.put(threshold_map, "TATATECH", 1.71)
+    map.put(threshold_map, "KELLTONTEC", 0.41)
+    map.put(threshold_map, "GPPL", 0.41)
+    map.put(threshold_map, "SWIGGY", 0.82)
+    map.put(threshold_map, "CASTROLIND", 0.47)
+    map.put(threshold_map, "EDELWEISS", 0.29)
+    map.put(threshold_map, "BOMDYEING", 0.41)
+    map.put(threshold_map, "LLOYDSENGG", 0.23)
+    map.put(threshold_map, "HFCL", 0.36)
+    map.put(threshold_map, "BAJAJFINSV", 4.26)
+    map.put(threshold_map, "ACC", 1.30)
+    map.put(threshold_map, "DIACABS", 0.46)
+    map.put(threshold_map, "HERITGFOOD", 1.18)
+    map.put(threshold_map, "IDEAFORGE", 2.25)
+    map.put(threshold_map, "VIPIND", 0.96)
+    map.put(threshold_map, "JMFINANCIL", 0.23)
+    map.put(threshold_map, "SEQUENT", 0.60)
+    map.put(threshold_map, "PRINCEPIPE", 0.97)
+    map.put(threshold_map, "IFCI", 0.17)
+    map.put(threshold_map, "AVANTEL", 0.56)
+    map.put(threshold_map, "STAR", 2.01)
+    map.put(threshold_map, "PURVA", 1.08)
+    map.put(threshold_map, "DAMCAPITAL", 1.03)
+    map.put(threshold_map, "LUMAXTECH", 3.00)
+    map.put(threshold_map, "VASCONEQ", 0.24)
+    map.put(threshold_map, "ABDL", 0.99)
+    map.put(threshold_map, "MARKSANS", 0.52)
+    map.put(threshold_map, "TEXRAIL", 0.53)
+    map.put(threshold_map, "DOLATALGO", 0.35)
+    map.put(threshold_map, "PGEL", 1.08)
+    map.put(threshold_map, "ITDCEM", 1.60)
+    map.put(threshold_map, "GEOJITFSL", 0.35)
+    map.put(threshold_map, "LXCHEM", 0.26)
+    map.put(threshold_map, "SIGACHI", 0.24)
+    map.put(threshold_map, "SHRIRAMPPS", 0.35)
+    map.put(threshold_map, "RALLIS", 0.49)
+    map.put(threshold_map, "GESHIP", 1.54)
+    map.put(threshold_map, "SHILPAMED", 4.75)
+    map.put(threshold_map, "MOL", 0.39)
+    map.put(threshold_map, "MOREPENLAB", 0.22)
+    map.put(threshold_map, "PRECWIRE", 0.72)
+    map.put(threshold_map, "GHCLTEXTIL", 0.35)
+    map.put(threshold_map, "SUPRAJIT", 1.17)
+    map.put(threshold_map, "DENTA", 0.50)
+    map.put(threshold_map, "BATAINDIA", 0.89)
+    map.put(threshold_map, "FIEMIND", 5.24)
+    map.put(threshold_map, "SFL", 0.97)
+    map.put(threshold_map, "MARUTI", 22.57)
+    map.put(threshold_map, "TVSMOTOR", 6.75)
+    map.put(threshold_map, "TRIDENT", 0.05)
+    map.put(threshold_map, "MBLINFRA", 0.16)
+    map.put(threshold_map, "JKLAKSHMI", 0.97)
+    map.put(threshold_map, "MADRASFERT", 0.20)
+    map.put(threshold_map, "AUTOBEES", 0.35)
+    map.put(threshold_map, "REDTAPE", 0.26)
+    map.put(threshold_map, "GIPCL", 0.58)
+    map.put(threshold_map, "PLATIND", 0.91)
+    map.put(threshold_map, "ASALCBR", 2.11)
+    map.put(threshold_map, "PNB", 0.21)
+    map.put(threshold_map, "MAHLOG", 1.00)
+    map.put(threshold_map, "HNGSNGBEES", 0.23)
+    map.put(threshold_map, "GOLDBEES", 0.06)
+    map.put(threshold_map, "SKFINDIA", 6.83)
+    map.put(threshold_map, "ADANIPOWER", 1.14)
+    map.put(threshold_map, "GOKEX", 1.57)
+    map.put(threshold_map, "GNA", 0.84)
+    map.put(threshold_map, "JAMNAAUTO", 0.26)
+    map.put(threshold_map, "KKCL", 0.82)
+    map.put(threshold_map, "PRAKASH", 0.49)
+    map.put(threshold_map, "CDSL", 4.73)
+    map.put(threshold_map, "IFBIND", 3.19)
+    map.put(threshold_map, "PSUBNKBEES", 0.14)
+    map.put(threshold_map, "TBOTEK", 2.49)
+    map.put(threshold_map, "GRINFRA", 3.46)
+    map.put(threshold_map, "TATVA", 2.99)
+    map.put(threshold_map, "INDIGO", 10.49)
+    map.put(threshold_map, "HYUNDAI", 2.71)
+    map.put(threshold_map, "PPL", 1.58)
+    map.put(threshold_map, "DALBHARAT", 5.51)
+    map.put(threshold_map, "DALMIASUG", 1.40)
+    map.put(threshold_map, "ZYDUSLIFE", 1.66)
+    map.put(threshold_map, "GODREJCP", 3.42)
+    map.put(threshold_map, "BANKBEES", 0.59)
+    map.put(threshold_map, "LALPATHLAB", 3.83)
+    map.put(threshold_map, "PNCINFRA", 0.62)
+    map.put(threshold_map, "RTNINDIA", 0.18)
+    map.put(threshold_map, "SHRIPISTON", 6.48)
+    map.put(threshold_map, "NHPC", 0.20)
+    map.put(threshold_map, "SCILAL", 0.15)
+    map.put(threshold_map, "BAJAJ", 19.68)
+    map.put(threshold_map, "CIGNITITEC", 5.34)
+    map.put(threshold_map, "EXIDEIND", 0.65)
+    map.put(threshold_map, "ITBEES", 0.07)
+    map.put(threshold_map, "RIIL", 2.27)
+    map.put(threshold_map, "PFC", 1.06)
+    map.put(threshold_map, "PHARMABEES", 0.03)
+    map.put(threshold_map, "ZYDUSWELL", 4.47)
+    map.put(threshold_map, "EPIGRAL", 5.23)
+    map.put(threshold_map, "KIRLOSENG", 1.28)
+    map.put(threshold_map, "APTUS", 0.86)
+    map.put(threshold_map, "EUREKAFORB", 1.22)
+    map.put(threshold_map, "MPSLTD", 8.15)
+    map.put(threshold_map, "GOKULAGRO", 0.59)
+
+// Get threshold for current symbol
+map_threshold = map.get(threshold_map, syminfo.ticker)
+final_threshold = use_map_thresholds and not na(map_threshold) ? map_threshold : user_threshold
+
+// Threshold source tracking
+threshold_source = use_map_thresholds and not na(map_threshold) ? "Map" : "Manual"
+
+// ========================================
+// BB Width Calculation
+// ========================================
+
+// Calculate Bollinger Bands
+bb_middle = ta.sma(close, bb_period)
+bb_std = ta.stdev(close, bb_period)
+bb_upper = bb_middle + (bb_std_dev * bb_std)
+bb_lower = bb_middle - (bb_std_dev * bb_std)
+
+// Calculate normalized BB Width percentage
+bb_width = (bb_upper - bb_lower)
+
+// ========================================
+// Squeeze Detection Logic
+// ========================================
+
+// Check if current BB width is below threshold
+squeeze_condition = bb_width <= final_threshold
+
+// Log BB width for debugging
+if barstate.islast
+    log.info("BB Width: " + str.tostring(bb_width, "#.####") + " | Upper: " + str.tostring(bb_upper, "#.####") + " | Lower: " + str.tostring(bb_lower, "#.####") + " | Middle: " + str.tostring(bb_middle, "#.####") + " | Threshold: " + str.tostring(final_threshold, "#.####") + " | Squeeze: " + (squeeze_condition ? "YES" : "NO"))
+
+// ========================================
+// PHASE 3: Advanced Visual System
+// ========================================
+
+// Squeeze intensity calculation
+squeeze_intensity = final_threshold / bb_width
+
+// Enhanced triangle position logic
+triangle_position = close > bb_middle ? high : low
+
+// Color gradient based on squeeze intensity
+triangle_color = squeeze_intensity > 1.5 ? color.red : 
+                 squeeze_intensity > 1.2 ? color.orange : 
+                 squeeze_intensity > 1.1 ? color.yellow : color.green
+
+// Triangle size based on squeeze intensity
+triangle_size = squeeze_intensity > 1.5 ? size.large : squeeze_intensity > 1.2 ? size.normal : size.small
+
+// Enhanced visual alert with intensity-based styling
+plotshape(squeeze_condition and show_squeeze_alerts, "Squeeze Alert Up", shape.triangleup, location.belowbar, triangle_color, size=size.tiny, text="SQ")
+
+// ========================================
+// PHASE 4: Advanced Features & Optimization
+// ========================================
+
+// User customization inputs
+show_info_table = input.bool(true, "Show Information Table", group="User Customization")
+show_labels = input.bool(false, "Show Detailed Labels", group="User Customization")
+alert_on_squeeze = input.bool(false, "Alert on Squeeze", group="Alert System")
+alert_on_intensity = input.float(1.5, "Alert on Intensity >", minval=1.0, maxval=3.0, group="Alert System")
+
+// Intensity-based alert conditions
+extreme_squeeze = squeeze_intensity > 1.5
+strong_squeeze = squeeze_intensity > 1.2
+moderate_squeeze = squeeze_intensity > 1.1
+
+// Alert system with intensity filtering
+if alert_on_squeeze and squeeze_condition and squeeze_intensity >= alert_on_intensity
+    alert("🚨 Volatility Squeeze Alert: " + syminfo.ticker + 
+          "\nBB Width: " + str.tostring(bb_width, "#.##") + "%" +
+          "\nThreshold: " + str.tostring(final_threshold, "#.##") + "%" +
+          "\nIntensity: " + str.tostring(squeeze_intensity, "#.##") +
+          "\nDirection: " + (close > bb_middle ? "Bullish" : "Bearish"), 
+          alert.freq_once_per_bar)
+
+// Detailed labels for squeeze analysis
+if show_labels and squeeze_condition
+    label_text = "SQ: " + str.tostring(bb_width, "#.##") + "%\n" +
+                 "Int: " + str.tostring(squeeze_intensity, "#.##") + "\n" +
+                 "Dir: " + (close > bb_middle ? "↑" : "↓")
+    
+    label.new(bar_index, triangle_position, label_text,
+              style=label.style_label_down,
+              color=triangle_color,
+              textcolor=color.white,
+              size=size.small)
+
+// ========================================
+// Visual Rendering
+// ========================================
+
+// Plot Bollinger Bands (always calculate, conditionally display)
+plot(show_bb_bands ? bb_upper : na, "BB Upper", color=color.blue, linewidth=1)
+plot(show_bb_bands ? bb_middle : na, "BB Middle", color=color.gray, linewidth=1)
+plot(show_bb_bands ? bb_lower : na, "BB Lower", color=color.blue, linewidth=1)
+
+// ========================================
+// Information Display
+// ========================================
+
+// Display current BB width value and threshold info
+var table info_table = table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
+if barstate.islast and show_info_table
+    table.cell(info_table, 0, 0, "BB Width", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, str.tostring(bb_width, "#.##") + "%", text_color=color.black)
+    table.cell(info_table, 0, 1, "Threshold", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 1, str.tostring(final_threshold, "#.##") + "%", text_color=color.black)
+    table.cell(info_table, 0, 2, "Source", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 2, threshold_source, text_color=color.black)
+    table.cell(info_table, 0, 3, "Intensity", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 3, str.tostring(squeeze_intensity, "#.##"), 
+               text_color=squeeze_condition ? triangle_color : color.gray)
+    table.cell(info_table, 0, 4, "Direction", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 4, close > bb_middle ? "Bullish" : "Bearish", 
+               text_color=close > bb_middle ? color.green : color.red)
+    table.cell(info_table, 0, 5, "Squeeze", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 5, squeeze_condition ? "YES" : "NO", 
+               text_color=squeeze_condition ? color.red : color.green)
+
+// ========================================
+// Performance Optimization
+// ========================================
+
+// Prevent repainting by using confirmed bars only
+bb_width := barstate.isconfirmed ? bb_width : bb_width[1]
+squeeze_condition := barstate.isconfirmed ? squeeze_condition : squeeze_condition[1]
+squeeze_intensity := barstate.isconfirmed ? squeeze_intensity : squeeze_intensity[1]
+
+// Cache frequently used calculations
+bb_middle := barstate.isconfirmed ? bb_middle : bb_middle[1]
+bb_upper := barstate.isconfirmed ? bb_upper : bb_upper[1]
+bb_lower := barstate.isconfirmed ? bb_lower : bb_lower[1]
