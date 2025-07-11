@@ -326,28 +326,6 @@ plot(show_bb_bands ? bb_upper : na, "BB Upper", color=color.blue, linewidth=1)
 plot(show_bb_bands ? bb_middle : na, "BB Middle", color=color.gray, linewidth=1)
 plot(show_bb_bands ? bb_lower : na, "BB Lower", color=color.blue, linewidth=1)
 
-// ========================================
-// Information Display
-// ========================================
-
-// Display current BB width value and threshold info
-var table info_table = table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
-if barstate.islast and show_info_table
-    table.cell(info_table, 0, 0, "BB Width", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 0, str.tostring(bb_width, "#.##") + "%", text_color=color.black)
-    table.cell(info_table, 0, 1, "Threshold", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 1, str.tostring(final_threshold, "#.##") + "%", text_color=color.black)
-    table.cell(info_table, 0, 2, "Source", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 2, threshold_source, text_color=color.black)
-    table.cell(info_table, 0, 3, "Intensity", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 3, str.tostring(squeeze_intensity, "#.##"), 
-               text_color=squeeze_condition ? triangle_color : color.gray)
-    table.cell(info_table, 0, 4, "Direction", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 4, close > bb_middle ? "Bullish" : "Bearish", 
-               text_color=close > bb_middle ? color.green : color.red)
-    table.cell(info_table, 0, 5, "Squeeze", text_color=color.black, bgcolor=color.gray)
-    table.cell(info_table, 1, 5, squeeze_condition ? "YES" : "NO", 
-               text_color=squeeze_condition ? color.red : color.green)
 
 // ========================================
 // Performance Optimization
