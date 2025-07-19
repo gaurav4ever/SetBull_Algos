@@ -239,7 +239,7 @@ if barstate.isfirst
     map.put(threshold_map, "SILVER", 0.17)
     map.put(threshold_map, "GRAVITA", 0.17)
     map.put(threshold_map, "MICEL", 0.18)
-    map.put(threshold_map, "AEROFLEX", 0.18)
+    map.put(threshold_map, "AEROFLEX", 0.4)
     map.put(threshold_map, "ITDCEM", 0.18)
     map.put(threshold_map, "DENTA", 0.18)
     map.put(threshold_map, "PSUBNKBEES", 0.18)
