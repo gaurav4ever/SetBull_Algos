@@ -93,8 +93,8 @@ def list_available_columns(csv_file):
 
 def main():
     parser = argparse.ArgumentParser(description='Update threshold map in Pine Script file based on CSV column')
-    parser.add_argument('--csv', default='bb_width_analysis.csv', help='CSV file path (default: bb_width_analysis.csv)')
-    parser.add_argument('--pine', default='volatility_squeeze_indicatpor.pine', help='Pine Script file path (default: volatility_squeeze_indicatpor.pine)')
+    parser.add_argument('--csv', default='/Users/gaurav/VsCode/SetBull_Algos/backtesting/volatility_squeeze/bb_width_analysis.csv', help='CSV file path (default: bb_width_analysis.csv)')
+    parser.add_argument('--pine', default='/Users/gaurav/VsCode/SetBull_Algos/backtesting/volatility_squeeze/volatility_squeeze_indicatpor.pine', help='Pine Script file path (default: volatility_squeeze_indicatpor.pine)')
     parser.add_argument('--column', help='Column name from CSV to use for thresholds')
     parser.add_argument('--list-columns', action='store_true', help='List all available columns in CSV')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be updated without making changes')
